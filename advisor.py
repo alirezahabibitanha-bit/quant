@@ -218,26 +218,42 @@ def compute_facts(answers, daily, book):
     return f
 
 
-def trend_signals(daily):
-    """True = در طلا باشید، False = در تتر باشید، None = داده کافی نیست.
-    روش‌های ماهانه با قیمت آخرین روز ماه قبل تصمیم می‌گیرند (مثل تست)، تقاطع با آخرین روز بسته‌شده."""
-    def above_ma(x, n):
-        return None if len(x) < n else bool(x.iloc[-1] > x.iloc[-n:].mean())
-
-    out = {}
+def signal_levels(daily):
+    """سیگنال هر روش و «خط تصمیم» آن (عددی که بالا یا پایین بودن قیمت از آن سیگنال را تعیین می‌کند).
+    روش‌های ماهانه با قیمت آخرین روز ماه قبل تصمیم می‌گیرند (مثل تست)، تقاطع با آخرین روز بسته‌شده.
+    signal: True = در طلا باشید، False = در تتر باشید، None = داده کافی نیست.
+    line_next: خطی که در بررسی بعدی ملاک است (برای میانگین ۷ ماه، مقدار امروزش که تا آن روز کمی جابه‌جا می‌شود)."""
     month_start = pd.Timestamp.now(tz="Asia/Tehran").normalize().replace(day=1)
+    next_check = month_start + pd.offsets.MonthBegin(1)
     upto = daily[daily.index < month_start]
-    out["MA200_MONTHLY"] = above_ma(upto, SIG_MA_LONG) if len(upto) else None
-    out["MOM12_MONTHLY"] = None
+
+    ma = {"signal": None, "line_next": None, "next_check": next_check}
+    if len(upto) >= SIG_MA_LONG:
+        ma["signal"] = bool(upto.iloc[-1] > upto.iloc[-SIG_MA_LONG:].mean())
+    if len(daily) >= SIG_MA_LONG:
+        ma["line_next"] = float(daily.iloc[-SIG_MA_LONG:].mean())
+
+    mom = {"signal": None, "line_next": None, "next_check": next_check}
     if len(upto):
         past = upto[upto.index <= upto.index[-1] - pd.Timedelta(days=SIG_MOM_DAYS)]
         if len(past):
-            out["MOM12_MONTHLY"] = bool(upto.iloc[-1] > past.iloc[-1])
+            mom["signal"] = bool(upto.iloc[-1] > past.iloc[-1])
+    # بررسی بعدی با قیمت آخر همین ماه انجام می‌شود؛ قیمت ۱۲ ماه قبل از آن روز از الان معلوم است
+    ref = daily[daily.index <= next_check - pd.Timedelta(days=1 + SIG_MOM_DAYS)]
+    if len(ref) and len(daily) and (daily.index[0] <= ref.index[-1]):
+        mom["line_next"] = float(ref.iloc[-1])
+
+    cr = {"signal": None, "line_next": None, "short": None, "next_check": None}
     if len(daily) >= SIG_MA_LONG:
-        out["CROSS_50_200"] = bool(daily.iloc[-SIG_MA_SHORT:].mean() > daily.iloc[-SIG_MA_LONG:].mean())
-    else:
-        out["CROSS_50_200"] = None
-    return out
+        cr["short"] = float(daily.iloc[-SIG_MA_SHORT:].mean())
+        cr["line_next"] = float(daily.iloc[-SIG_MA_LONG:].mean())
+        cr["signal"] = cr["short"] > cr["line_next"]
+    return {"MA200_MONTHLY": ma, "MOM12_MONTHLY": mom, "CROSS_50_200": cr}
+
+
+def trend_signals(daily):
+    """True = در طلا باشید، False = در تتر باشید، None = داده کافی نیست."""
+    return {m: v["signal"] for m, v in signal_levels(daily).items()}
 
 
 def track_record():
@@ -490,68 +506,6 @@ def short_text(answers, f, opinion):
     return "\n".join(L)
 
 
-# ---------------------------------------------------------------- پیام سیگنال (برای بله)
-
-SIGNAL_SIMPLE = {"MA200_MONTHLY": "میانگین ۷ ماه (ماهی یک بار)",
-                 "MOM12_MONTHLY": "مقایسه با یک سال پیش (ماهی یک بار)",
-                 "CROSS_50_200": "میانگین ۲ ماه در برابر ۷ ماه (روزانه)"}
-SIGNAL_REMINDER = ("یادآوری: این روش‌ها در آزمایش ۲۰ ساله از «فقط نگه داشتن» بهتر نبودند؛ "
-                   "فقط در دوره‌های ریزشی افت را کمتر کردند. ربات خرید و فروش انجام نمی‌دهد.")
-
-
-def jalali_now():
-    now = pd.Timestamp.now(tz="Asia/Tehran")
-    jy, jm, jd = to_jalali(now.year, now.month, now.day)
-    return f"{fa(jd)} {FA_MONTHS[jm - 1]} {fa(jy, sep=False)}، ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}"
-
-
-def signal_word(v):
-    return "معلوم نیست (داده کم است)" if v is None else ("طلا نگه دارید ✅" if v else "تتر نگه دارید ⛔")
-
-
-def signal_vote(signals):
-    known = [v for v in signals.values() if v is not None]
-    if not known:
-        return "داده کافی برای سیگنال نیست."
-    gold = sum(known)
-    if gold == len(known):
-        return f"جمع: هر {fa(len(known))} روش می‌گویند «طلا نگه دارید»."
-    if gold == 0:
-        return f"جمع: هر {fa(len(known))} روش می‌گویند «تتر نگه دارید»."
-    return f"جمع: {fa(gold)} از {fa(len(known))} روش می‌گویند «طلا نگه دارید»."
-
-
-def signal_text(signals, price):
-    """پیام دکمه «سیگنال امروز»."""
-    rec = track_record()
-    L = [f"📡 سیگنال امروز — {jalali_now()}"]
-    if price:
-        L.append(f"قیمت هر واحد طلا الان: حدود {fa(price)} تتر")
-    L.append("")
-    for m, v in signals.items():
-        L.append(f"• {SIGNAL_SIMPLE[m]}: {signal_word(v)}")
-        if m in rec:
-            L.append(f"   کارنامه ۲۰ ساله: سود سالانه {fa(rec[m].cagr * 100)}٪، "
-                     f"بدترین افت {fa(rec[m].max_dd * 100)}٪")
-    if "HOLD" in rec:
-        h = rec["HOLD"]
-        L.append(f"• برای مقایسه، فقط نگه داشتن: سود سالانه {fa(h.cagr * 100)}٪، "
-                 f"بدترین افت {fa(h.max_dd * 100)}٪")
-    L += ["", signal_vote(signals), "", SIGNAL_REMINDER]
-    return "\n".join(L)
-
-
-def signal_change_text(changes, signals, price):
-    """پیام خبر خودکار وقتی سیگنالی عوض شد. changes = [(روش، قبلی، جدید)]"""
-    L = [f"🔔 سیگنال عوض شد — {jalali_now()}", ""]
-    for m, old, new in changes:
-        L.append(f"• {SIGNAL_SIMPLE[m]}: از «{'طلا' if old else 'تتر'}» به «{'طلا' if new else 'تتر'}»")
-    if price:
-        L.append(f"قیمت هر واحد طلا الان: حدود {fa(price)} تتر")
-    L += ["", signal_vote(signals), "", SIGNAL_REMINDER]
-    return "\n".join(L)
-
-
 # ---------------------------------------------------------------- سیگنال (برای بله)
 
 SIGNAL_PLAIN = {"MA200_MONTHLY": "میانگین ۷ ماه (ماهی یک بار)",
@@ -586,15 +540,40 @@ def jalali_now():
     return f"{fa(jd)} {FA_MONTHS[jm - 1]} {fa(jy, sep=False)}، ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}"
 
 
-def signal_text(signals, price):
-    """پیام «سیگنال امروز»: سیگنال هر روش به زبان ساده."""
+def jalali_date(ts):
+    jy, jm, jd = to_jalali(ts.year, ts.month, ts.day)
+    return f"{fa(jd)} {FA_MONTHS[jm - 1]}"
+
+
+def signal_text(levels, price):
+    """پیام «سیگنال امروز»: سیگنال هر روش با خط تصمیم و فاصله قیمت از آن."""
+    signals = {m: v["signal"] for m, v in levels.items()}
     L = [f"📡 سیگنال امروز — {jalali_now()}"]
     if price:
-        L.append(f"قیمت هر واحد طلا: {fa(price)} تتر")
-    L.append("")
-    for i, (m, v) in enumerate(signals.items(), 1):
-        L.append(f"• روش {fa(i)} — {SIGNAL_PLAIN[m]}: {signal_word(v)}")
-    L += ["", f"جمع: {signal_vote(signals)}", "", SIGNAL_REMINDER]
+        L.append(f"قیمت هر واحد طلا الان: {fa(price)} تتر")
+    for i, (m, v) in enumerate(levels.items(), 1):
+        L += ["", f"{fa(i)}) {SIGNAL_PLAIN[m]}: {signal_word(v['signal'])}"]
+        line = v["line_next"]
+        if line is None or v["signal"] is None:
+            continue
+        if m == "CROSS_50_200":
+            L.append(f"• میانگین ۲ ماه: {fa(v['short'])} — میانگین ۷ ماه: {fa(line)} تتر")
+            flip = ("وقتی میانگین ۲ ماه زیر میانگین ۷ ماه برود ← «تتر»" if v["signal"]
+                    else "وقتی میانگین ۲ ماه بالای میانگین ۷ ماه برود ← «طلا»")
+            L.append(f"• {flip}")
+            continue
+        what = "میانگین ۷ ماه اخیر" if m == "MA200_MONTHLY" else "قیمت ۱۲ ماه پیش"
+        L.append(f"• خط تصمیم: {fa(line)} تتر ({what})")
+        if price:
+            where = "بالاتر" if price >= line else "پایین‌تر"
+            L.append(f"• قیمت الان {fa(abs(price / line - 1) * 100, 1)}٪ {where} از خط است")
+        about = "حدود " if m == "MA200_MONTHLY" else ""
+        cond = f"زیر {about}{fa(line)} ← «تتر»" if v["signal"] else f"بالای {about}{fa(line)} ← «طلا»"
+        L.append(f"• بررسی بعدی {jalali_date(v['next_check'] - pd.Timedelta(days=1))}: "
+                 f"اگر قیمت آن روز {cond}")
+    L += ["", f"جمع: {signal_vote(signals)}", "",
+          "این عددها «خط تصمیم» همین روش‌های تست‌شده‌اند، نه حد سود و ضرر حدسی.",
+          SIGNAL_REMINDER]
     return "\n".join(L)
 
 
