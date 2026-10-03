@@ -209,9 +209,40 @@ def compute_facts(answers, daily, book):
 
 # ---------------------------------------------------------------- نظر الگوریتم
 
-def algorithm_opinion(answers, facts):
-    """قطعه قابل تعویض. فعلاً ساخته نشده؛ در قدم بعد با هم طراحی می‌شود."""
-    return "NOT BUILT YET", "هنوز ساخته نشده است. در قدم بعد طراحی می‌شود."
+OPINION_EN = {
+    "HOLD_AVOID_TRADING": "Hold; avoid moving in and out (no timing method beat holding in a 20-year test).",
+    "HOLD_EVIDENCE": "Holding gave more profit than timing methods in a 20-year test.",
+    "NO_TIMING_ADVICE": "No advice on when to sell; see the real cost of selling now.",
+}
+
+
+def algorithm_opinion(answers, f):
+    """قطعه قابل تعویض. بر پایه تست ۲۰ ساله (backtest_slow.py): هیچ روش زمان‌بندی از نگه داشتن بهتر نبود.
+    خروجی: (کد کوتاه برای لاگ، فهرست جمله‌های فارسی برای گزارش)"""
+    lines = ["در تست ۲۰ ساله روی قیمت جهانی طلا، هیچ روشی برای زمان‌بندی خرید و فروش "
+             "از «فقط نگه داشتن» بهتر نبود."]
+    goal = answers["goal"]
+    if goal == "1":
+        code = "HOLD_AVOID_TRADING"
+        lines.append("برای هدف «نگه داشتن بلندمدت»: نگه دارید و از جابه‌جایی پرهیز کنید.")
+    elif goal == "2":
+        code = "HOLD_EVIDENCE"
+        lines.append("برای هدف «سود بیشتر»: شواهد نشان می‌دهد نگه داشتن، سود بیشتری از جابه‌جایی داده است.")
+    else:
+        code = "NO_TIMING_ADVICE"
+        if answers["xaut"] > 0:
+            cost_usdt = answers["xaut"] * f["mid"] * f["sell_cost"]
+            lines.append(f"برای هدف «نقد کردن سریع»: هزینه واقعی فروش همه طلا همین الان "
+                         f"{pct(f['sell_cost'], False, 3)} است، یعنی حدود {cost_usdt:,.2f} تتر. "
+                         "درباره زمان فروش پیشنهادی نمی‌دهیم.")
+        else:
+            lines.append("برای هدف «نقد کردن سریع»: طلایی برای فروش ندارید؛ دارایی شما همین الان تتر است.")
+    if f["trend"] in ("UP", "DOWN"):
+        where = "زیر" if f["trend"] == "DOWN" else "بالای"
+        lines.append(f"فقط برای اطلاع: قیمت {where} میانگین ۲۰۰ روزه است. "
+                     "در تست، عمل کردن به این نشانه سود را بیشتر نکرد؛ "
+                     "فقط در دوره‌های ریزشی افت را کمتر کرد.")
+    return code, lines
 
 
 # ---------------------------------------------------------------- خروجی
@@ -249,7 +280,8 @@ def print_summary(answers, f, opinion):
           + (f" ({pct(f['vs_ma200'])} from average)" if f["vs_ma200"] is not None else ""))
     print(f" From 1-year high         : {pct(f['from_year_high'])}")
     print("-" * 62)
-    print(f" ALGORITHM OPINION (EXPERIMENTAL, UNPROVEN): {opinion[0]}")
+    print(" ALGORITHM OPINION (EXPERIMENTAL):")
+    print(f"   {OPINION_EN[opinion[0]]}")
     print("-" * 62)
     print(f" Full Persian report: {REPORT_PATH}")
     print(f" Logged to          : {LOG_PATH}")
@@ -302,9 +334,11 @@ def report_text(answers, f, opinion):
     L.append(f"- **فاصله از بالاترین قیمت یک سال اخیر** ({f['year_high']:,.2f}): {pct(f['from_year_high'])}")
     L.append(f"- **تغییر قیمت در {f['year_days']} روز اخیر**: {pct(f['year_change'])}\n")
 
-    L.append("## بخش ۲: نظر الگوریتم (آزمایشی و ثابت‌نشده)\n")
-    L.append("> این بخش هنوز با داده‌های گذشته ثابت نشده است. آن را قطعی ندانید.\n")
-    L.append(f"- {opinion[1]}\n")
+    L.append("## بخش ۲: نظر الگوریتم (آزمایشی)\n")
+    L.append("> این بخش نظر است، نه واقعیت. بر پایه تست ۲۰ ساله قیمت جهانی طلا "
+             "(گزارش کامل: slow_methods_report.md). گذشته تضمین آینده نیست.\n")
+    L.extend(f"- {line}" for line in opinion[1])
+    L.append("")
     return "\n".join(L)
 
 
