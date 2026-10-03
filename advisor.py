@@ -628,6 +628,74 @@ def forecast_text(daily, price):
     return "\n".join(L)
 
 
+# ---------------------------------------------------------------- پیش‌بینی ۲ دقیقه (برای بله)
+
+TWO_MIN_LOG_PATH = "forecast_2min_log.csv"
+TWO_MIN_RANGE_HIT = (72, 94)      # درستی بازه ۲ دقیقه در آزمایش (خروجی backtest_2min.py)
+INDICATOR_HIT = {"RSI(14)": 51.3, "MACD(12,26,9)": 50.5, "Bollinger(20,2)": 50.6,
+                 "SMA 9/21 cross": 50.5, "Momentum(1)": 49.5}   # درصد درستی جهت در همان آزمایش
+INDICATOR_LOG = {"RSI(14)": "rsi", "MACD(12,26,9)": "macd", "Bollinger(20,2)": "bollinger",
+                 "SMA 9/21 cross": "sma_9_21", "Momentum(1)": "momentum"}
+INDICATOR_FA = {"RSI(14)": "RSI", "MACD(12,26,9)": "MACD", "Bollinger(20,2)": "بولینگر",
+                "SMA 9/21 cross": "میانگین ۹ و ۲۱", "Momentum(1)": "مومنتوم"}
+
+
+def fetch_minutes(hours=4):
+    """کندل‌های ۱ دقیقه‌ای چند ساعت اخیر والکس را می‌گیرد و به کندل ۲ دقیقه‌ای تبدیل می‌کند."""
+    end = int(time.time())
+    r = requests.get(HISTORY_URL, headers=HEADERS, timeout=20, params={
+        "symbol": SYMBOL, "resolution": "1", "from": end - hours * 3600, "to": end})
+    d = r.json()
+    if isinstance(d, dict) and "s" not in d and isinstance(d.get("result"), dict):
+        d = d["result"]
+    if not (isinstance(d, dict) and d.get("s") == "ok" and d.get("t")):
+        raise SystemExit("No minute data received.")
+    df = pd.DataFrame({"time": d["t"], "open": d["o"], "close": d["c"]}).apply(pd.to_numeric, errors="coerce")
+    df = df.dropna().drop_duplicates("time").sort_values("time")
+    df.index = pd.to_datetime(df.time.values, unit="s", utc=True)
+    bars = df.resample("2min").agg({"open": "first", "close": "last"}).dropna()
+    if len(bars) and bars.index[-1] + pd.Timedelta("2min") > pd.Timestamp.now(tz="UTC"):
+        bars = bars.iloc[:-1]                  # کندل نیمه‌کاره
+    if len(bars) < 40:
+        raise SystemExit("Not enough minute data.")
+    return bars.reset_index(drop=True)
+
+
+def two_min_text(bars, price):
+    """پیام «پیش‌بینی ۲ دقیقه»: بازه آزمایش‌شده + نظر اندیکاتورها با درصد درستی‌شان."""
+    from backtest_2min import signals   # همان کدی که آزمایش شده
+    if price is None:
+        price = float(bars.close.iloc[-1])
+    lr = np.log(bars.close).diff()
+    sigma = float(np.sqrt(lr.pow(2).ewm(alpha=0.06, adjust=False).mean().iloc[-1]))
+    lo1, hi1 = price * np.exp(-sigma), price * np.exp(sigma)
+    lo2, hi2 = price * np.exp(-2 * sigma), price * np.exp(2 * sigma)
+    now = pd.Timestamp.now(tz="Asia/Tehran")
+    L = [f"⏱ پیش‌بینی ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
+         f"قیمت طلا الان: {fa(price, 1)} تتر", "",
+         "بازه قیمت تا ۲ دقیقه دیگر:",
+         f"• به احتمال زیاد (۲ از ۳): بین {fa(lo1, 1)} و {fa(hi1, 1)}",
+         f"• تقریباً حتماً (۱۹ از ۲۰): بین {fa(lo2, 1)} و {fa(hi2, 1)}",
+         f"(در آزمایش روی ۱۷ هزار کندل ۲ دقیقه‌ای طلا، این بازه‌ها {fa(TWO_MIN_RANGE_HIT[0])}٪ و "
+         f"{fa(TWO_MIN_RANGE_HIT[1])}٪ مواقع درست بودند.)", "",
+         "اندیکاتورهای معروف تریدرها چه می‌گویند:"]
+    last = signals(bars).iloc[-1]
+    votes = {}
+    for m, v in last.items():
+        word = "بالا ⬆️" if v > 0 else ("پایین ⬇️" if v < 0 else "نظری ندارد")
+        votes[m] = int(v)
+        L.append(f"• {INDICATOR_FA[m]}: {word} (درستی در آزمایش: {fa(INDICATOR_HIT[m], 1)}٪)")
+    L += ["", "⚠️ هیچ‌کدام از این اندیکاتورها در آزمایش بیشتر از ۵۱٪ درست نگفتند؛ یعنی تقریباً مثل شیر یا خط.",
+          f"حرکت معمول طلا در ۲ دقیقه حدود ۰٫۰۳٪ است، ولی هزینه هر خرید و فروش در والکس حدود ۰٫۴٪ است."]
+    row = {"made_at": now.strftime("%Y-%m-%d %H:%M:%S"), "price": round(price, 2),
+           "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
+           "sure_low": round(lo2, 2), "sure_high": round(hi2, 2),
+           **{INDICATOR_LOG[m]: v for m, v in votes.items()}}
+    pd.DataFrame([row]).to_csv(TWO_MIN_LOG_PATH, mode="a", header=not os.path.exists(TWO_MIN_LOG_PATH),
+                               index=False)
+    return "\n".join(L)
+
+
 def write_report(answers, f, opinion):
     with open(REPORT_PATH, "w", encoding="utf-8") as fh:
         fh.write(report_text(answers, f, opinion))
