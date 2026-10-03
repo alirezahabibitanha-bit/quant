@@ -214,9 +214,8 @@ class Advisor:
         return self.daily
 
     def signals(self):
-        """(سیگنال‌ها، قیمت فعلی یا None)"""
-        signals = advisor.trend_signals(self.daily_prices())
-        return signals, self.market_price()
+        """(سیگنال و خط تصمیم هر روش، قیمت فعلی یا None)"""
+        return advisor.signal_levels(self.daily_prices()), self.market_price()
 
     def report(self, answers):
         daily = self.daily_prices()
@@ -262,12 +261,12 @@ class Conversation:
     def send_signal(self, chat_id):
         self.bot.send(chat_id, "در حال گرفتن قیمت‌ها از والکس... (تا ۳۰ ثانیه)")
         try:
-            signals, price = self.adv.signals()
+            levels, price = self.adv.signals()
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" Signal failed: {e}")
             self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
             return
-        self.main_menu(chat_id, advisor.signal_text(signals, price))
+        self.main_menu(chat_id, advisor.signal_text(levels, price))
 
     def start_questions(self, chat_id):
         self.answers[chat_id] = {}
@@ -421,7 +420,8 @@ def handle_button(bot, conv, cq):
 
 def check_signal_change(bot, adv):
     """سیگنال‌ها را با آخرین بار مقایسه می‌کند؛ اگر عوض شده بود به مشترک‌ها خبر می‌دهد."""
-    signals, price = adv.signals()
+    levels, price = adv.signals()
+    signals = {m: v["signal"] for m, v in levels.items()}
     before = load_json(SIGNAL_STATE_PATH, None)
     changes = []
     if before is not None:
