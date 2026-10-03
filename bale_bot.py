@@ -273,7 +273,7 @@ class Conversation:
 
     def send_2min(self, chat_id):
         try:
-            text = advisor.two_min_text(advisor.fetch_minutes(), self.adv.market_price())
+            text = advisor.two_min_text(advisor.fetch_minutes(), advisor.fetch_book())
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" 2-minute forecast failed: {e}")
             self.main_menu(chat_id, "گرفتن قیمت دقیقه‌ای از والکس نشد. کمی بعد دوباره امتحان کنید.")

@@ -239,14 +239,38 @@ def hour_factors(path=TWO_MIN):
     return {h: float(f.get(h, 1.0)) for h in range(24)}
 
 
+def gap_returns(close, times):
+    """بازده هر کندل ۲ دقیقه‌ای. اگر چند کندل بی‌معامله وسطش افتاده باشد، بازده بر رادیکال
+    تعداد بازه‌ها تقسیم می‌شود تا یک «پرش» چنددقیقه‌ای، نوسان ۲ دقیقه را بزرگ نشان ندهد."""
+    t = pd.DatetimeIndex(times)
+    steps = np.r_[1.0, np.diff(t.asi8) / 120e9]
+    r = np.r_[0.0, np.diff(np.log(np.asarray(close, float)))]
+    return r / np.sqrt(np.maximum(steps, 1.0))
+
+
+def two_min_sigma(close, times, lam=0.94):
+    """نوسان کندل ۲ دقیقه‌ای بعد با EWMA (همان مدل آزمایش‌شده در backtest_2min.py)."""
+    return float(np.sqrt(ewma_var(gap_returns(close, times), lam)[-1]))
+
+
 def two_min_sigma_hour(close, times, factors, lam=0.94):
-    """نوسان کندل ۲ دقیقه‌ای بعد، با حذف و اضافه کردن اثر ساعت. times به وقت UTC."""
+    """همان، ولی با حذف و اضافه کردن اثر ساعت روز. times به وقت UTC."""
     hours = pd.DatetimeIndex(times).hour
     fac = np.array([factors.get(h, 1.0) for h in hours])
-    r = np.log(np.asarray(close, float))
-    r = np.r_[0.0, np.diff(r)] / np.sqrt(fac)
+    r = gap_returns(close, times) / np.sqrt(fac)
     nxt = pd.Timestamp(times[-1]) + pd.Timedelta(minutes=2)
     return float(np.sqrt(ewma_var(r, lam)[-1] * factors.get(nxt.hour, 1.0)))
+
+
+def two_min_abs_z(path=TWO_MIN):
+    """خطاهای واقعی گذشته مدل EWMA روی طلای جهانی: |بازده بعدی / نوسان پیش‌بینی‌شده|، مرتب‌شده.
+    بازه «۸۰٪» و «۹۵٪» از چندک‌های همین ساخته می‌شود، نه از فرض توزیع نرمال (دم‌های پهن)."""
+    df = pd.read_csv(path, parse_dates=["time"]).sort_values("time").reset_index(drop=True)
+    lr = np.log(df.close).diff()
+    sig = np.sqrt(ewma_var(lr.fillna(0).values))
+    ok = (df.time.shift(-1) - df.time == pd.Timedelta(minutes=2)) & (sig > 0)
+    z = (lr.shift(-1) / sig)[ok].dropna().iloc[100:]
+    return np.sort(z.abs().values)
 
 
 # ---------------------------------------------------------------- گزارش
