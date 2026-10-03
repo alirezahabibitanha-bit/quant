@@ -594,7 +594,7 @@ FORECAST_LOOKBACK = 84        # روز تقویمی ≈ ۶۰ روز کاری، �
 FORECAST_HORIZONS = ((7, "تا یک هفته دیگر"), (30, "تا یک ماه دیگر"))
 FORECAST_HIT = (69, 94)       # درصد درستی بازه‌ها در ۲۱ سال (خروجی forecast_check.py)
 FORECAST_LOG_PATH = "forecast_log.csv"
-SHADOW_LOG_PATH = "forecast_shadow_log.csv"   # مدل آزمایشی GARCH، فقط ثبت (forecast_models.py)
+SHADOW_LOG_PATH = "forecast_shadow_log.csv"   # مدل آزمایشی GARCH (forecast_models.py)
 
 
 def price_range(daily, price, days):
@@ -623,14 +623,21 @@ def forecast_text(daily, price):
           "گاهی هم حرکت بزرگ‌تری پیش می‌آید، ولی کم."]
     pd.DataFrame(rows).to_csv(FORECAST_LOG_PATH, mode="a", header=not os.path.exists(FORECAST_LOG_PATH),
                               index=False)
-    log_shadow_forecast(daily, price, now)
+    trial = shadow_forecast(daily, price, now)
+    if trial:
+        L += ["", "🧪 آزمایشی — روش دوم (GARCH):"]
+        for days, label in FORECAST_HORIZONS:
+            lo, hi = trial[days]
+            L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo)} و {fa(hi)} تتر")
+        L += ["این روش زودتر می‌فهمد بازار آرام شده یا شلوغ. در ۲۰ سال خطایش کمی کمتر بود،",
+              "ولی وقت‌های آرام بازه را بیش از لازم پهن می‌گرفت. هنوز ثابت نشده؛ فقط برای مقایسه است."]
     return "\n".join(L)
 
 
-def log_shadow_forecast(daily, price, now):
-    """بازه مدل GARCH(1,1) را فقط ثبت می‌کند (به کاربر نشان داده نمی‌شود).
+def shadow_forecast(daily, price, now):
+    """بازه مدل آزمایشی GARCH(1,1): ثبت در لاگ و برگرداندن {روز: (پایین، بالا)} برای «به احتمال زیاد».
     در forecast_models.py خطای کمتری از روش فعلی داشت ولی طبق قانون برد قبول نشد؛
-    این‌جا روی داده واقعی والکس سنجیده می‌شود. اگر خطا داد، ربات کارش را ادامه می‌دهد."""
+    این‌جا روی داده واقعی والکس سنجیده می‌شود. اگر خطا داد None برمی‌گرداند و ربات کارش را ادامه می‌دهد."""
     try:
         from forecast_models import garch_filter, garch_fit, garch_h
         r = np.log(daily).diff().dropna().values
@@ -644,8 +651,10 @@ def log_shadow_forecast(daily, price, now):
                          "sure_low": round(price * np.exp(-2 * s), 2), "sure_high": round(price * np.exp(2 * s), 2)})
         pd.DataFrame(rows).to_csv(SHADOW_LOG_PATH, mode="a", header=not os.path.exists(SHADOW_LOG_PATH),
                                   index=False)
+        return {x["days"]: (x["likely_low"], x["likely_high"]) for x in rows}
     except Exception as e:
-        print(f" Shadow forecast skipped: {e}")
+        print(f" Trial forecast skipped: {e}")
+        return None
 
 
 # ---------------------------------------------------------------- پیش‌بینی ۲ دقیقه (برای بله)
