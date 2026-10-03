@@ -658,17 +658,29 @@ def shadow_forecast(daily, price, now):
 
 
 # ---------------------------------------------------------------- پیش‌بینی ۲ دقیقه (برای بله)
+#
+# روش (از گزارش تحقیقاتی؛ جهت قابل پیش‌بینی نیست، اندازه تکان هست):
+#   - نوسان کندل بعدی با EWMA (آزمایش‌شده در backtest_2min.py)، دور آخرین قیمت معامله
+#   - بازه ۸۰٪ و ۹۵٪ از خطاهای واقعی گذشته، نه فرض توزیع نرمال (forecast_models.two_min_abs_z):
+#     تا وقتی روی والکس کمتر از TWO_MIN_SELF_CALIB پیش‌بینی سنجیده شده، از طلای جهانی؛ بعد از آن از خود والکس
+#   - مقایسه با هزینه رفت و برگشت (کارمزد + فاصله قیمت خرید و فروش)
+#   - کنترل سلامت داده: اگر والکس کم‌معامله است، هشدار
+#   - کارنامه زنده: هر پیش‌بینی بعداً با قیمت واقعی والکس سنجیده می‌شود
+#   - روش آزمایشی: همان، با اثر ساعت روز (forecast_models.py: قبول نشد، آماره ‎-1.16)
 
-TWO_MIN_LOG_PATH = "forecast_2min_log.csv"
-TWO_MIN_TRIAL_LOG_PATH = "forecast_2min_trial_log.csv"   # روش آزمایشی اثر ساعت (forecast_models.py)
-_HOUR_FACTORS = None              # یک بار از data/GC_F_2m.csv خوانده می‌شود
-TWO_MIN_RANGE_HIT = (72, 94)      # درستی بازه ۲ دقیقه در آزمایش (خروجی backtest_2min.py)
+TWO_MIN_LOG_PATH = "forecast_2min_v2.csv"          # هر پیش‌بینی (نسخه ۲: بازه ۸۰٪/۹۵٪)
+TWO_MIN_SCORE_PATH = "forecast_2min_scores.csv"    # سنجش هر پیش‌بینی با قیمت واقعی ۲ دقیقه بعد
+TWO_MIN_LEVELS = (0.80, 0.95)
+TWO_MIN_SELF_CALIB = 200          # از این تعداد سنجش به بعد، بازه از خطاهای خود والکس ساخته می‌شود
+TWO_MIN_SELF_WINDOW = 500         # آخرین چند سنجش والکس برای ساختن بازه
+TWO_MIN_SCORECARD_MIN = 20        # کمتر از این، کارنامه هنوز معنایی ندارد
+STALE_MINUTES = 6                 # آخرین کندل قدیمی‌تر از این = داده کهنه
+MIN_FILL = 0.5                    # در یک ساعت اخیر، حداقل نیمی از کندل‌های ۲ دقیقه‌ای معامله داشته باشند
 INDICATOR_HIT = {"RSI(14)": 51.3, "MACD(12,26,9)": 50.5, "Bollinger(20,2)": 50.6,
-                 "SMA 9/21 cross": 50.5, "Momentum(1)": 49.5}   # درصد درستی جهت در همان آزمایش
+                 "SMA 9/21 cross": 50.5, "Momentum(1)": 49.5}   # درصد درستی جهت در backtest_2min.py
 INDICATOR_LOG = {"RSI(14)": "rsi", "MACD(12,26,9)": "macd", "Bollinger(20,2)": "bollinger",
                  "SMA 9/21 cross": "sma_9_21", "Momentum(1)": "momentum"}
-INDICATOR_FA = {"RSI(14)": "RSI", "MACD(12,26,9)": "MACD", "Bollinger(20,2)": "بولینگر",
-                "SMA 9/21 cross": "میانگین ۹ و ۲۱", "Momentum(1)": "مومنتوم"}
+_CACHE = {}                       # چیزهایی که یک بار از data/GC_F_2m.csv ساخته می‌شوند
 
 
 def fetch_minutes(hours=4):
@@ -689,77 +701,159 @@ def fetch_minutes(hours=4):
         bars = bars.iloc[:-1]                  # کندل نیمه‌کاره
     if len(bars) < 40:
         raise SystemExit("Not enough minute data.")
-    bars.index.name = "time"                   # زمان شروع کندل به وقت UTC (برای روش آزمایشی ساعت)
+    bars.index.name = "time"                   # زمان شروع کندل به وقت UTC
     return bars.reset_index()
 
 
-def two_min_text(bars, price):
-    """پیام «پیش‌بینی ۲ دقیقه»: بازه آزمایش‌شده + نظر اندیکاتورها با درصد درستی‌شان."""
+def _cached(name, make):
+    if name not in _CACHE:
+        _CACHE[name] = make()
+    return _CACHE[name]
+
+
+def data_health(bars, now_utc):
+    """(سالم است؟، توضیح فارسی اگر نیست). کندل‌های بی‌معامله در fetch_minutes حذف شده‌اند."""
+    t = pd.DatetimeIndex(bars.time)
+    age = (now_utc - (t[-1] + pd.Timedelta(minutes=2))).total_seconds() / 60
+    recent = bars[t >= t[-1] - pd.Timedelta(minutes=58)]
+    fill = len(recent) / 30
+    flat = float((recent.close.diff().iloc[1:] == 0).mean()) if len(recent) > 1 else 1.0
+    if age > STALE_MINUTES:
+        return False, f"آخرین معامله طلا در والکس حدود {fa(age)} دقیقه پیش بوده؛ بازار الان تقریباً خواب است."
+    if fill < MIN_FILL or flat > 0.5:
+        return False, "در یک ساعت اخیر معامله طلا در والکس کم بوده؛ قیمت‌ها تکه‌تکه‌اند."
+    return True, ""
+
+
+def score_past(bars):
+    """پیش‌بینی‌های قبلی را که ۲ دقیقه‌شان گذشته و قیمتشان در همین داده هست، با قیمت واقعی می‌سنجد."""
+    if not os.path.exists(TWO_MIN_LOG_PATH):
+        return
+    log = pd.read_csv(TWO_MIN_LOG_PATH)
+    done = set(pd.read_csv(TWO_MIN_SCORE_PATH).made_at) if os.path.exists(TWO_MIN_SCORE_PATH) else set()
+    ends = pd.DatetimeIndex(bars.time) + pd.Timedelta(minutes=2)
+    rows = []
+    for _, x in log[~log.made_at.isin(done)].iterrows():
+        target = pd.Timestamp(x.target_utc)
+        if target > ends[-1] or target < ends[0]:
+            continue                            # هنوز نرسیده، یا قدیمی‌تر از داده دریافتی
+        actual = float(bars.close[ends <= target].iloc[-1])   # آخرین قیمت معامله تا آن لحظه
+        z = np.log(actual / x.price) / x.sigma
+        row = {"made_at": x.made_at, "actual": actual, "z": round(z, 4), "data_ok": x.data_ok,
+               "in_80": x.low_80 <= actual <= x.high_80, "in_95": x.low_95 <= actual <= x.high_95}
+        if pd.notna(x.get("trial_low_80")):
+            row["trial_in_80"] = x.trial_low_80 <= actual <= x.trial_high_80
+        rows.append(row)
+    if rows:
+        pd.DataFrame(rows).reindex(columns=["made_at", "actual", "z", "data_ok", "in_80", "in_95", "trial_in_80"]) \
+            .to_csv(TWO_MIN_SCORE_PATH, mode="a", header=not os.path.exists(TWO_MIN_SCORE_PATH), index=False)
+
+
+def two_min_scores():
+    if not os.path.exists(TWO_MIN_SCORE_PATH):
+        return pd.DataFrame(columns=["z", "data_ok", "in_80", "in_95", "trial_in_80"])
+    return pd.read_csv(TWO_MIN_SCORE_PATH)
+
+
+def two_min_quantiles(scores):
+    """چندک‌های بازه ۸۰٪ و ۹۵٪ و منبعشان. فقط از پیش‌بینی‌های گذشته (بدون نگاه به آینده)."""
+    own = scores[scores.data_ok.astype(bool)].z.dropna().abs() if len(scores) else pd.Series(dtype=float)
+    if len(own) >= TWO_MIN_SELF_CALIB:
+        absz, source = np.sort(own.values[-TWO_MIN_SELF_WINDOW:]), "wallex"
+    else:
+        from forecast_models import two_min_abs_z
+        absz, source = _cached("absz", two_min_abs_z), "global"
+    return [float(np.quantile(absz, p)) for p in TWO_MIN_LEVELS], absz, source
+
+
+def two_min_text(bars, book=None, now=None):
+    """پیام «پیش‌بینی ۲ دقیقه». book = {'bid','ask'} از fetch_book یا None. now فقط برای آزمایش."""
     from backtest_2min import signals   # همان کدی که آزمایش شده
-    if price is None:
-        price = float(bars.close.iloc[-1])
-    lr = np.log(bars.close).diff()
-    sigma = float(np.sqrt(lr.pow(2).ewm(alpha=0.06, adjust=False).mean().iloc[-1]))
-    lo1, hi1 = price * np.exp(-sigma), price * np.exp(sigma)
-    lo2, hi2 = price * np.exp(-2 * sigma), price * np.exp(2 * sigma)
-    now = pd.Timestamp.now(tz="Asia/Tehran")
+    from forecast_models import hour_factors, two_min_sigma, two_min_sigma_hour
+    now = pd.Timestamp.now(tz="Asia/Tehran") if now is None else now.tz_convert("Asia/Tehran")
+    now_utc = now.tz_convert("UTC")
+    try:
+        score_past(bars)
+    except Exception as e:
+        print(f" 2-minute scoring skipped: {e}")
+    scores = two_min_scores()
+    (q80, q95), absz, source = two_min_quantiles(scores)
+    price = float(bars.close.iloc[-1])                     # آخرین قیمت معامله
+    sigma = two_min_sigma(bars.close.values, bars.time.values)
+    band = lambda q, s=sigma: (price * np.exp(-q * s), price * np.exp(q * s))
+    (lo80, hi80), (lo95, hi95) = band(q80), band(q95)
+    ok, why = data_health(bars, now_utc)
+
+    L = [f"⏱ ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
+         f"آخرین قیمت معامله در والکس: {fa(price)} تتر", "",
+         "تا ۲ دقیقه دیگر:",
+         f"• با احتمال ۸۰٪ بین {fa(lo80)} و {fa(hi80)}",
+         f"• با احتمال ۹۵٪ بین {fa(lo95)} و {fa(hi95)}"]
+    L.append("(این احتمال‌ها از خطاهای واقعی خود ربات روی والکس ساخته شده‌اند.)" if source == "wallex" else
+             "(این احتمال‌ها از رفتار واقعی قیمت جهانی طلا ساخته شده‌اند، نه از فرمول.)")
+    if not ok:
+        L += ["", f"⚠️ {why} این بازه را با احتیاط ببینید."]
+
+    # هزینه: خرید به قیمت فروشنده‌ها، فروش ۲ دقیقه بعد به قیمت خریدارها، هر بار کارمزد
+    cost_line = []
+    if book:
+        mid = (book["bid"] + book["ask"]) / 2
+        cost = (book["ask"] - book["bid"]) / mid + 2 * FEE
+        need = cost * price
+        chance = float(np.mean(absz > np.log(1 + cost) / sigma)) / 2 if sigma > 0 else 0.0
+        chance_fa = "کمتر از ۱ در هزار" if chance < 0.001 else f"حدود {fa(chance * 100, 1)}٪"
+        cost_line = ["", f"💰 اگر الان بخرید ({fa(book['ask'])}) و ۲ دقیقه بعد بفروشید، "
+                         f"قیمت باید حداقل {fa(need)} تتر بالا برود تا فقط ضرر نکنید (کارمزد + فاصله خرید و فروش).",
+                     f"شانس این‌قدر بالا رفتن در ۲ دقیقه: {chance_fa}."]
+    L += cost_line
+
     last = signals(bars).iloc[-1]
     votes = {m: int(v) for m, v in last.items()}
-    up = sum(v > 0 for v in votes.values())
-    down = sum(v < 0 for v in votes.values())
-    parts = [f"{fa(up)} تا می‌گویند بالا" if up else "", f"{fa(down)} تا می‌گویند پایین" if down else ""]
-    said = "، ".join(p for p in parts if p) or "هیچ‌کدام نظری ندارند"
-    if up > down:
-        said = f"{fa(up)} تا از ۵ ابزار تریدرها می‌گویند بالا می‌رود"
-    elif down > up:
-        said = f"{fa(down)} تا از ۵ ابزار تریدرها می‌گویند پایین می‌آید"
-    else:
-        said = "ابزارهای تریدرها با هم موافق نیستند"
-    L = [f"⏱ ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
-         f"قیمت الان: {fa(price)} تتر", "",
-         f"تا ۲ دقیقه دیگر قیمت به احتمال زیاد بین {fa(lo1)} و {fa(hi1)} می‌ماند؛ "
-         "یعنی تقریباً تکان نمی‌خورد.", "",
-         f"{said}.",
-         "ولی این ابزارها را روی ۱۷ هزار بار قیمت واقعی امتحان کردیم: فقط نصف دفعه‌ها درست گفتند؛ "
-         "مثل شیر یا خط."]
-    row = {"made_at": now.strftime("%Y-%m-%d %H:%M:%S"), "price": round(price, 2),
-           "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
-           "sure_low": round(lo2, 2), "sure_high": round(hi2, 2),
-           **{INDICATOR_LOG[m]: v for m, v in votes.items()}}
-    pd.DataFrame([row]).to_csv(TWO_MIN_LOG_PATH, mode="a", header=not os.path.exists(TWO_MIN_LOG_PATH),
-                               index=False)
-    trial = two_min_trial(bars, price, row["made_at"])
-    if trial:
-        lo, hi, busy = trial
-        L += ["", "🧪 آزمایشی — روش دوم (با حساب ساعت روز):",
-              f"به احتمال زیاد بین {fa(lo)} و {fa(hi)} تتر.",
-              "این روش می‌داند بعدازظهر تهران (وقت اخبار آمریکا) بازار تندتر تکان می‌خورد و نیمه‌شب آرام‌تر"
-              + ("؛ الان ساعت شلوغ است." if busy else "."),
-              "در آزمایش کمی بهتر بود ولی نه آن‌قدر که مطمئن باشیم. فقط برای مقایسه است."]
-    return "\n".join(L)
+    up, down = sum(v > 0 for v in votes.values()), sum(v < 0 for v in votes.values())
+    said = (f"{fa(up)} تا از ۵ ابزار تریدرها می‌گویند بالا می‌رود" if up > down else
+            f"{fa(down)} تا از ۵ ابزار تریدرها می‌گویند پایین می‌آید" if down > up else
+            "ابزارهای تریدرها با هم موافق نیستند")
+    L += ["", f"🎲 {said}؛ ولی روی ۱۷ هزار بار قیمت واقعی فقط نصف دفعه‌ها درست گفتند، مثل شیر یا خط."]
 
+    row = {"made_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+           "target_utc": (now_utc + pd.Timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S+00:00"),
+           "price": round(price, 2), "sigma": round(sigma, 7), "calib": source, "data_ok": ok,
+           "low_80": round(lo80, 2), "high_80": round(hi80, 2), "low_95": round(lo95, 2), "high_95": round(hi95, 2),
+           "bid": book["bid"] if book else None, "ask": book["ask"] if book else None}
 
-def two_min_trial(bars, price, made_at):
-    """بازه آزمایشی ۲ دقیقه با اثر ساعت روز (forecast_models.py، قبول نشد: آماره ‎-1.16).
-    ثبت در لاگ جدا و برگرداندن (پایین، بالا، ساعت شلوغ است؟). اگر خطا داد None."""
-    try:
-        from forecast_models import hour_factors, two_min_sigma_hour
-        global _HOUR_FACTORS
-        if _HOUR_FACTORS is None:
-            _HOUR_FACTORS = hour_factors()
-        sigma = two_min_sigma_hour(bars.close.values, bars.time.values, _HOUR_FACTORS)
+    try:   # روش آزمایشی؛ اگر خطا داد، پیام بدون آن فرستاده می‌شود
+        fac = _cached("hours", hour_factors)
+        s_h = two_min_sigma_hour(bars.close.values, bars.time.values, fac)
+        (tlo, thi), (tlo95, thi95) = band(q80, s_h), band(q95, s_h)
         nxt_hour = (pd.Timestamp(bars.time.iloc[-1]) + pd.Timedelta(minutes=2)).hour
-        lo, hi = price * np.exp(-sigma), price * np.exp(sigma)
-        row = {"made_at": made_at, "price": round(price, 2), "model": "EWMA_HOUR",
-               "hour_factor": round(_HOUR_FACTORS[nxt_hour], 2),
-               "likely_low": round(lo, 2), "likely_high": round(hi, 2),
-               "sure_low": round(price * np.exp(-2 * sigma), 2), "sure_high": round(price * np.exp(2 * sigma), 2)}
-        pd.DataFrame([row]).to_csv(TWO_MIN_TRIAL_LOG_PATH, mode="a",
-                                   header=not os.path.exists(TWO_MIN_TRIAL_LOG_PATH), index=False)
-        return lo, hi, _HOUR_FACTORS[nxt_hour] > 1.2
+        busy = fac[nxt_hour] > 1.2
+        row.update(trial_low_80=round(tlo, 2), trial_high_80=round(thi, 2),
+                   trial_low_95=round(tlo95, 2), trial_high_95=round(thi95, 2), hour_factor=round(fac[nxt_hour], 2))
+        L += ["", "🧪 آزمایشی — با حساب ساعت روز:",
+              f"با احتمال ۸۰٪ بین {fa(tlo)} و {fa(thi)}"
+              + ("؛ الان معمولاً ساعت پرتکانی است." if busy else "."),
+              "در آزمایش کمی بهتر بود ولی نه آن‌قدر که مطمئن باشیم."]
     except Exception as e:
         print(f" 2-minute trial skipped: {e}")
-        return None
+
+    # کارنامه زنده روی والکس
+    sc = scores[scores.data_ok.astype(bool)] if len(scores) else scores
+    if len(sc) >= TWO_MIN_SCORECARD_MIN:
+        line = (f"📋 کارنامه روی والکس: از {fa(len(sc))} پیش‌بینی قبلی، "
+                f"{fa(sc.in_80.astype(bool).mean() * 100)}٪ داخل بازه ۸۰٪ بود "
+                f"و {fa(sc.in_95.astype(bool).mean() * 100)}٪ داخل بازه ۹۵٪")
+        tr = sc.trial_in_80.dropna() if "trial_in_80" in sc else []
+        if len(tr) >= TWO_MIN_SCORECARD_MIN:
+            line += f" (روش آزمایشی: {fa(tr.astype(bool).mean() * 100)}٪ داخل ۸۰٪)"
+        L += ["", line + "."]
+    else:
+        L += ["", f"📋 کارنامه روی والکس: هنوز {fa(len(sc))} پیش‌بینی سنجیده شده؛ "
+                  f"از {fa(TWO_MIN_SCORECARD_MIN)} به بعد درصد درستی این‌جا می‌آید."]
+
+    row.update({INDICATOR_LOG[m]: v for m, v in votes.items()})
+    pd.DataFrame([row]).to_csv(TWO_MIN_LOG_PATH, mode="a", header=not os.path.exists(TWO_MIN_LOG_PATH),
+                               index=False)
+    return "\n".join(L)
 
 
 def write_report(answers, f, opinion):
