@@ -53,6 +53,7 @@
 
 ## محیط
 - کد در GitHub نگه داشته می‌شود و با Claude Code روی وب ساخته می‌شود.
+- Claude اجازه دارد Pull Request باز کند و خودش در main مرج کند. به‌روزرسانی سرور فقط دستی و توسط کاربر است (~/quant/update.sh، از شاخه main).
 - سرور اجرا: Ubuntu، ۱ هسته، ۱ گیگ رم، با Swap. Claude Code روی سرور نصب نشود (قبلاً رم را پر کرد و سرور قفل شد).
 - کتابخانه‌های سرور از apt: python3-pandas, python3-requests, python3-numpy, screen
 - کلید API والکس هرگز در کد، GitHub یا چت نیاید.
