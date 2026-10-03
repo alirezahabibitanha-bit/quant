@@ -594,6 +594,7 @@ FORECAST_LOOKBACK = 84        # روز تقویمی ≈ ۶۰ روز کاری، �
 FORECAST_HORIZONS = ((7, "تا یک هفته دیگر"), (30, "تا یک ماه دیگر"))
 FORECAST_HIT = (69, 94)       # درصد درستی بازه‌ها در ۲۱ سال (خروجی forecast_check.py)
 FORECAST_LOG_PATH = "forecast_log.csv"
+SHADOW_LOG_PATH = "forecast_shadow_log.csv"   # مدل آزمایشی GARCH، فقط ثبت (forecast_models.py)
 
 
 def price_range(daily, price, days):
@@ -622,7 +623,29 @@ def forecast_text(daily, price):
           "گاهی هم حرکت بزرگ‌تری پیش می‌آید، ولی کم."]
     pd.DataFrame(rows).to_csv(FORECAST_LOG_PATH, mode="a", header=not os.path.exists(FORECAST_LOG_PATH),
                               index=False)
+    log_shadow_forecast(daily, price, now)
     return "\n".join(L)
+
+
+def log_shadow_forecast(daily, price, now):
+    """بازه مدل GARCH(1,1) را فقط ثبت می‌کند (به کاربر نشان داده نمی‌شود).
+    در forecast_models.py خطای کمتری از روش فعلی داشت ولی طبق قانون برد قبول نشد؛
+    این‌جا روی داده واقعی والکس سنجیده می‌شود. اگر خطا داد، ربات کارش را ادامه می‌دهد."""
+    try:
+        from forecast_models import garch_filter, garch_fit, garch_h
+        r = np.log(daily).diff().dropna().values
+        (a, b), v_long = garch_fit(r)
+        v1 = garch_filter(r, a, b, v_long)[-1]
+        rows = []
+        for days, _ in FORECAST_HORIZONS:
+            s = float(np.sqrt(garch_h(v1, a, b, v_long, days)))
+            rows.append({"made_at": now, "price": round(price, 2), "days": days, "model": "GARCH",
+                         "likely_low": round(price * np.exp(-s), 2), "likely_high": round(price * np.exp(s), 2),
+                         "sure_low": round(price * np.exp(-2 * s), 2), "sure_high": round(price * np.exp(2 * s), 2)})
+        pd.DataFrame(rows).to_csv(SHADOW_LOG_PATH, mode="a", header=not os.path.exists(SHADOW_LOG_PATH),
+                                  index=False)
+    except Exception as e:
+        print(f" Shadow forecast skipped: {e}")
 
 
 # ---------------------------------------------------------------- پیش‌بینی ۲ دقیقه (برای بله)
