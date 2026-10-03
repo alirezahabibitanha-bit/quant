@@ -454,64 +454,64 @@ def fa(x, decimals=0, sep=True):
 
 
 def short_text(answers, f, opinion):
-    """گزارش کوتاه و ساده برای پیام بله. جزئیات کامل در report_text است."""
+    """گزارش کوتاه بله، به زبان گفت‌وگو. جزئیات کامل در report_text است."""
     now = pd.Timestamp.now(tz="Asia/Tehran")
     jy, jm, jd = to_jalali(now.year, now.month, now.day)
-    L = [f"📊 گزارش طلا و تتر — {fa(jd)} {FA_MONTHS[jm - 1]} {fa(jy, sep=False)}، "
-         f"ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}"]
-    if not f["book_live"]:
-        L.append("⚠️ قیمت زنده گرفته نشد؛ آخرین قیمت دیروز استفاده شد.")
     xaut = answers["xaut"]
+    L = [f"📊 وضعیت شما — {fa(jd)} {FA_MONTHS[jm - 1]}", ""]
+    if not f["book_live"]:
+        L += ["⚠️ قیمت لحظه‌ای گرفته نشد؛ قیمت دیروز حساب شد.", ""]
 
-    L += ["", "💰 دارایی شما",
-          f"• کل: {fa(f['total_now'])} تتر ({fa(f['gold_share'] * 100)}٪ طلا)"]
     if xaut > 0:
-        L.append(f"• طلا: {fa(xaut, 4).rstrip('۰').rstrip('٫')} واحد (حدود {fa(grams(xaut))} گرم)")
-        word = "سود" if f["pnl"] >= 0 else "زیان"
-        L.append(f"• اگر الان بفروشید: {fa(f['pnl'])} تتر {word} ({fa(f['pnl_pct'] * 100, 1)}٪)")
-        L.append(f"• قیمت سر به سر: {fa(f['breakeven_bid'])} تتر (بالاتر از این، فروش ضرر ندارد)")
+        L.append(f"دارایی شما الان حدود {fa(f['total_now'])} تتر می‌ارزد؛ "
+                 f"{fa(f['gold_share'] * 100)}٪ آن طلاست.")
+        if f["pnl"] >= 0:
+            L.append(f"اگر همین الان طلا را بفروشید، {fa(f['pnl'])} تتر سود می‌کنید "
+                     f"({fa(f['pnl_pct'] * 100, 1)}٪).")
+            L.append(f"تا وقتی قیمت بالای {fa(f['breakeven_bid'])} تتر باشد، فروختن ضرر ندارد.")
+        else:
+            L.append(f"اگر همین الان طلا را بفروشید، {fa(f['pnl'])} تتر ضرر می‌کنید "
+                     f"({fa(f['pnl_pct'] * 100, 1)}٪).")
+            L.append(f"برای اینکه بی‌ضرر بفروشید، قیمت باید به {fa(f['breakeven_bid'])} تتر برسد.")
+        L.append(f"کارمزد فروش همه طلا الان حدود {fa(xaut * f['mid'] * f['sell_cost'])} تتر است.")
         if price_looks_wrong(answers["buy_price"], f["mid"]):
-            L.append("⚠️ قیمت خریدی که وارد کردید خیلی با قیمت امروز فرق دارد؛ شاید قیمت هر گرم بوده.")
+            L.append("⚠️ قیمت خریدی که دادید خیلی با قیمت امروز فرق دارد؛ شاید قیمت هر گرم بوده.")
+    else:
+        L.append(f"دارایی شما {fa(f['total_now'])} تتر است و طلا ندارید.")
 
-    L += ["", "🏷 قیمت هر واحد طلا الان",
-          f"• فروش: {fa(f['bid'])} تتر — خرید: {fa(f['ask'])} تتر",
-          f"• هزینه هر فروش: {fa(f['sell_cost'] * 100, 1)}٪"
-          + (f" (برای همه طلای شما حدود {fa(xaut * f['mid'] * f['sell_cost'])} تتر)" if xaut > 0 else "")]
-
-    trend = {"UP": "رو به بالا", "DOWN": "رو به پایین", "UNKNOWN": "معلوم نیست (داده کم است)"}[f["trend"]]
-    L += ["", "📈 حال بازار", f"• روند: {trend}"]
-    if f["vs_ma200"] is not None:
-        where = "بالاتر" if f["vs_ma200"] >= 0 else "پایین‌تر"
-        L[-1] += f" — قیمت {fa(abs(f['vs_ma200']) * 100)}٪ {where} از میانگین ۷ ماه اخیر"
-    vol = {"HIGH": "زیاد (قیمت تند بالا و پایین می‌رود)", "NORMAL": "عادی",
-           "CALM": "کم (بازار آرام است)", "UNKNOWN": "معلوم نیست"}[f["vol_state"]]
-    L.append(f"• تلاطم: {vol}")
-    L.append(f"• نسبت به بالاترین قیمت یک سال اخیر: {fa(abs(f['from_year_high']) * 100)}٪ پایین‌تر")
+    L += ["", f"قیمت طلا الان {fa(f['mid'])} تتر است."]
+    if f["trend"] == "DOWN":
+        L.append("در چند ماه اخیر قیمت پایین آمده.")
+    elif f["trend"] == "UP":
+        L.append("در چند ماه اخیر قیمت بالا رفته.")
+    if f["from_year_high"] < -0.02:
+        L.append(f"الان {fa(abs(f['from_year_high']) * 100)}٪ ارزان‌تر از گران‌ترین قیمت یک سال اخیر است.")
+    calm = {"HIGH": "بازار این روزها پرتلاطم است و قیمت تند بالا و پایین می‌رود.",
+            "CALM": "بازار این روزها آرام است.", "NORMAL": "بازار این روزها حالت عادی دارد."}
+    if f["vol_state"] in calm:
+        L.append(calm[f["vol_state"]])
 
     goal = answers["goal"]
     if goal == "1":
-        advice = "نگه دارید و کمتر خرید و فروش کنید."
+        advice = "هدف شما نگه داشتن بلندمدت است؛ پیشنهاد ربات این است که نگه دارید و کمتر خرید و فروش کنید."
     elif goal == "2":
-        advice = "در ۲۰ سال گذشته، نگه داشتن بیشتر از خرید و فروش مکرر سود داده است."
+        advice = ("هدف شما سود بیشتر است؛ در ۲۰ سال گذشته کسانی که طلا را نگه داشتند "
+                  "بیشتر از کسانی که مدام خرید و فروش کردند سود بردند.")
     elif xaut > 0:
-        advice = (f"فروش همه طلا الان حدود {fa(xaut * f['mid'] * f['sell_cost'])} تتر هزینه دارد. "
-                  "درباره زمان فروش نظری نمی‌دهیم.")
+        advice = "هدف شما نقد کردن است؛ ربات درباره زمان فروش نظری نمی‌دهد. هزینه‌اش را بالا نوشتیم."
     else:
-        advice = "طلایی برای فروش ندارید؛ دارایی شما تتر است."
-    L += ["", "🤖 نظر ربات (آزمایشی)", f"• هدف شما «{GOALS[goal][1]}» است: {advice}"]
-    if any(v is not None for v in f["signals"].values()):
-        L.append(f"• سیگنال: {signal_vote(f['signals'])} (برای جزئیات «📡 سیگنال امروز» را بزنید.)")
-    L += ["", "ℹ️ این ربات خرید و فروش انجام نمی‌دهد. برای توضیح بیشتر «جزئیات کامل» را بزنید."]
+        advice = "هدف شما نقد کردن است و دارایی شما همین الان تتر است."
+    L += ["", f"🤖 نظر ربات: {advice}", "",
+          "ربات خودش خرید و فروش نمی‌کند. برای توضیح بیشتر «جزئیات کامل» را بزنید."]
     return "\n".join(L)
-
 
 # ---------------------------------------------------------------- سیگنال (برای بله)
 
 SIGNAL_PLAIN = {"MA200_MONTHLY": "میانگین ۷ ماه",
                 "MOM12_MONTHLY": "مقایسه با پارسال",
                 "CROSS_50_200": "میانگین ۲ ماه و ۷ ماه"}
-SIGNAL_REMINDER = ("یادآوری: این سیگنال‌ها در ۲۰ سال گذشته سود را بیشتر نکردند؛ "
-                   "فقط در ریزش‌ها ضرر را کمتر کردند. تصمیم با شماست.")
+SIGNAL_REMINDER = ("یادآوری: در ۲۰ سال گذشته، عمل کردن به این سیگنال‌ها سود بیشتری از "
+                   "نگه داشتن ساده طلا نداده. فقط در دوره‌های ریزش، ضرر را کمتر کرده.")
 
 
 def signal_word(v):
@@ -519,20 +519,21 @@ def signal_word(v):
 
 
 def signal_vote(signals):
-    """یک جمله: اکثر روش‌ها چه می‌گویند."""
+    """یک جمله ساده: بیشتر روش‌ها چه می‌گویند."""
     known = [v for v in signals.values() if v is not None]
     if not known:
-        return "داده کافی برای سیگنال نیست."
+        return "داده کافی برای حساب کردن نیست."
     gold = sum(known)
     usdt = len(known) - gold
     if gold == usdt:
-        return "روش‌ها نظر یکسانی ندارند (نصف طلا، نصف تتر)."
-    side = "طلا" if gold > usdt else "تتر"
+        return "روش‌ها با هم موافق نیستند."
     if min(gold, usdt) == 0:
-        return f"هر {fa(len(known))} روش می‌گویند «{side} نگه دارید»."
-    return f"{fa(max(gold, usdt))} روش از {fa(len(known))} روش می‌گویند «{side} نگه دارید»."
-
-
+        who = "هر " + fa(len(known)) + " روش"
+    else:
+        who = f"{fa(max(gold, usdt))} روش از {fa(len(known))} روش"
+    if gold > usdt:
+        return f"{who} می‌گویند الان بهتر است طلا داشته باشید."
+    return f"{who} می‌گویند الان بهتر است پول در تتر باشد، نه طلا."
 def jalali_now():
     now = pd.Timestamp.now(tz="Asia/Tehran")
     jy, jm, jd = to_jalali(now.year, now.month, now.day)
@@ -545,46 +546,47 @@ def jalali_date(ts):
 
 
 def signal_text(levels, price):
-    """پیام «سیگنال امروز»: اول نتیجه، بعد هر روش در دو جمله."""
+    """پیام «سیگنال امروز» به زبان گفت‌وگو."""
     signals = {m: v["signal"] for m, v in levels.items()}
     L = [f"📡 سیگنال امروز — {jalali_now()}"]
     if price:
         L.append(f"قیمت طلا: {fa(price)} تتر")
-    L += ["", f"نتیجه: {signal_vote(signals)}"]
-    for i, (m, v) in enumerate(levels.items(), 1):
-        L += ["", f"{fa(i)}. {SIGNAL_PLAIN[m]}: {signal_word(v['signal'])}"]
-        line, sig = v["line_next"], v["signal"]
-        if line is None or sig is None:
+    L += ["", signal_vote(signals), "", "چرا؟"]
+    ma, mom, cr = levels["MA200_MONTHLY"], levels["MOM12_MONTHLY"], levels["CROSS_50_200"]
+    if ma["line_next"] is not None and price:
+        if price < ma["line_next"]:
+            L.append(f"• قیمت از میانگین ۷ ماه اخیر ({fa(ma['line_next'])}) پایین‌تر است؛ یعنی بازار ضعیف شده.")
+        else:
+            L.append(f"• قیمت از میانگین ۷ ماه اخیر ({fa(ma['line_next'])}) بالاتر است؛ یعنی بازار قوی است.")
+    if mom["line_next"] is not None and price:
+        if price >= mom["line_next"]:
+            L.append(f"• قیمت از پارسال همین موقع ({fa(mom['line_next'])}) بالاتر است؛ یعنی در یک سال رشد کرده.")
+        else:
+            L.append(f"• قیمت از پارسال همین موقع ({fa(mom['line_next'])}) پایین‌تر است؛ یعنی در یک سال افت کرده.")
+    if cr["signal"] is not None:
+        L.append("• در ۲ ماه اخیر قیمت " + ("بالا رفته." if cr["signal"] else "پایین آمده."))
+    nxt = []
+    for v, name in ((ma, "اول"), (mom, "دوم")):
+        if v["signal"] is None or v["line_next"] is None:
             continue
-        other = "تتر" if sig else "طلا"
-        if m == "CROSS_50_200":
-            where = "بالای" if sig else "زیر"
-            move = "پایین‌تر" if sig else "بالاتر"
-            L.append(f"میانگین ۲ ماه ({fa(v['short'])}) {where} میانگین ۷ ماه ({fa(line)}) است.")
-            L.append(f"اگر {move} برود، سیگنال «{other}» می‌شود.")
-            continue
-        what = "میانگین ۷ ماه" if m == "MA200_MONTHLY" else "قیمت پارسال"
-        if price:
-            where = "بالاتر از" if price >= line else "زیر"
-            L.append(f"قیمت {fa(abs(price / line - 1) * 100)}٪ {where} {what} ({fa(line)}) است.")
-        cond = "زیر" if sig else "بالای"
-        L.append(f"اگر آخر ماه ({jalali_date(v['next_check'] - pd.Timedelta(days=1))}) قیمت {cond} "
-                 f"{fa(line)} باشد، سیگنال «{other}» می‌شود.")
+        side = "پایین‌تر از" if v["signal"] else "بالاتر از"
+        nxt.append(f"اگر قیمت آخر ماه ({jalali_date(v['next_check'] - pd.Timedelta(days=1))}) "
+                   f"{side} {fa(v['line_next'])} باشد، روش {name} نظرش عوض می‌شود.")
+    if nxt:
+        L += ["", "کی نظرشان عوض می‌شود؟"] + nxt
     L += ["", SIGNAL_REMINDER]
     return "\n".join(L)
-
-
 def signal_change_text(changes, signals, price):
     """پیام خبر تغییر سیگنال. changes = [(روش، قبلی، الان)، ...]"""
-    L = [f"🔔 سیگنال عوض شد — {jalali_now()}"]
+    L = [f"🔔 یکی از سیگنال‌ها عوض شد — {jalali_now()}"]
     if price:
         L.append(f"قیمت طلا: {fa(price)} تتر")
     L.append("")
     for m, old, new in changes:
-        L.append(f"• {SIGNAL_PLAIN[m]}: از «{'طلا' if old else 'تتر'}» به «{'طلا' if new else 'تتر'}» عوض شد.")
-    L += ["", f"نتیجه: {signal_vote(signals)}", "", SIGNAL_REMINDER]
+        L.append(f"روش «{SIGNAL_PLAIN[m]}» تا حالا می‌گفت {'طلا' if old else 'تتر'}، "
+                 f"حالا می‌گوید {'طلا' if new else 'تتر'}.")
+    L += ["", f"جمع‌بندی: {signal_vote(signals)}", "", SIGNAL_REMINDER]
     return "\n".join(L)
-
 
 # ---------------------------------------------------------------- پیش‌بینی حدودی (برای بله)
 
@@ -606,23 +608,18 @@ def forecast_text(daily, price):
     """پیام «پیش‌بینی حدودی» + ثبت در لاگ برای سنجش بعدی."""
     if price is None:
         price = float(daily.iloc[-1])
-    L = [f"🔮 پیش‌بینی حدودی — {jalali_now()}", f"قیمت طلا الان: {fa(price)} تتر", "",
-         "هیچ‌کس نمی‌داند طلا بالا می‌رود یا پایین. ولی از تکان‌های اخیرش می‌شود گفت "
-         "قیمت احتمالاً در چه بازه‌ای می‌ماند:"]
+    L = [f"🔮 قیمت طلا در آینده نزدیک — {jalali_now()}", f"قیمت الان: {fa(price)} تتر", "",
+         "هیچ‌کس نمی‌داند طلا بالا می‌رود یا پایین. ولی می‌دانیم معمولاً چقدر تکان می‌خورد:", ""]
     rows = []
     now = pd.Timestamp.now(tz="Asia/Tehran").strftime("%Y-%m-%d %H:%M")
     for days, label in FORECAST_HORIZONS:
         (lo1, hi1), (lo2, hi2) = price_range(daily, price, days)
-        L += ["", f"{label}:",
-              f"• به احتمال زیاد (۲ از ۳): بین {fa(lo1)} و {fa(hi1)}",
-              f"• تقریباً حتماً (۱۹ از ۲۰): بین {fa(lo2)} و {fa(hi2)}"]
+        L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo1)} و {fa(hi1)} تتر")
         rows.append({"made_at": now, "price": round(price, 2), "days": days,
                      "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
                      "sure_low": round(lo2, 2), "sure_high": round(hi2, 2)})
-    L += ["", f"این روش در ۲۱ سال گذشته آزمایش شده: قیمت واقعی {fa(FORECAST_HIT[0])}٪ مواقع داخل بازه اول "
-              f"و {fa(FORECAST_HIT[1])}٪ مواقع داخل بازه دوم ماند.",
-          "یعنی حدود یک بار از هر ۲۰ بار، حرکتی بزرگ‌تر از این هم پیش می‌آید.",
-          "روند فعلی در این پیش‌بینی نیامده، چون در آزمایش ما جهت قیمت را درست پیش‌بینی نکرد."]
+    L += ["", "«به احتمال زیاد» یعنی از هر ۳ بار، ۲ بار. در ۲۱ سال گذشته همین‌قدر درست بوده.",
+          "گاهی هم حرکت بزرگ‌تری پیش می‌آید، ولی کم."]
     pd.DataFrame(rows).to_csv(FORECAST_LOG_PATH, mode="a", header=not os.path.exists(FORECAST_LOG_PATH),
                               index=False)
     return "\n".join(L)
@@ -677,12 +674,19 @@ def two_min_text(bars, price):
     down = sum(v < 0 for v in votes.values())
     parts = [f"{fa(up)} تا می‌گویند بالا" if up else "", f"{fa(down)} تا می‌گویند پایین" if down else ""]
     said = "، ".join(p for p in parts if p) or "هیچ‌کدام نظری ندارند"
+    if up > down:
+        said = f"{fa(up)} تا از ۵ ابزار تریدرها می‌گویند بالا می‌رود"
+    elif down > up:
+        said = f"{fa(down)} تا از ۵ ابزار تریدرها می‌گویند پایین می‌آید"
+    else:
+        said = "ابزارهای تریدرها با هم موافق نیستند"
     L = [f"⏱ ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
-         f"قیمت الان: {fa(price, 1)} تتر", "",
-         f"• به احتمال زیاد بین {fa(lo1, 1)} و {fa(hi1, 1)}",
-         f"• تقریباً حتماً بین {fa(lo2, 1)} و {fa(hi2, 1)}", "",
-         f"اندیکاتورهای تریدرها: {said}.",
-         "ولی در آزمایش، هیچ‌کدام بهتر از شیر یا خط نبودند."]
+         f"قیمت الان: {fa(price)} تتر", "",
+         f"تا ۲ دقیقه دیگر قیمت به احتمال زیاد بین {fa(lo1)} و {fa(hi1)} می‌ماند؛ "
+         "یعنی تقریباً تکان نمی‌خورد.", "",
+         f"{said}.",
+         "ولی این ابزارها را روی ۱۷ هزار بار قیمت واقعی امتحان کردیم: فقط نصف دفعه‌ها درست گفتند؛ "
+         "مثل شیر یا خط."]
     row = {"made_at": now.strftime("%Y-%m-%d %H:%M:%S"), "price": round(price, 2),
            "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
            "sure_low": round(lo2, 2), "sure_high": round(hi2, 2),
