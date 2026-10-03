@@ -112,8 +112,12 @@ class Bale:
 
     def call(self, method, params=None, wait=40):
         url = API.format(token=self.token, method=method)
-        r = requests.post(url, json=params or {}, timeout=wait)
-        d = r.json()
+        try:
+            r = requests.post(url, json=params or {}, timeout=wait)
+            d = r.json()
+        except Exception as e:
+            # پیام خطا آدرس را دارد و آدرس کلید ربات را؛ کلید نباید در لاگ بیاید
+            raise RuntimeError(f"{method}: {str(e).replace(self.token, '***')}") from None
         if not d.get("ok"):
             raise RuntimeError(f"{method} failed: {d.get('description', d)}")
         return d.get("result")
