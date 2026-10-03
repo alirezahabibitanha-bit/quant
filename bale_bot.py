@@ -30,12 +30,19 @@ TOKEN_PATH = os.path.expanduser("~/.bale_token")
 ALLOWED_PATH = os.path.expanduser("~/.bale_allowed")
 DENIED_PATH = os.path.expanduser("~/.bale_denied")
 STATE_PATH = "bale_answers.json"     # آخرین جواب‌ها، برای «گزارش با جواب‌های قبلی»
+SUBS_PATH = "bale_subs.json"         # کسانی که «خبرم کن» را روشن کرده‌اند
+SIGNAL_STATE_PATH = "bale_signals.json"   # آخرین سیگنال‌های دیده‌شده، برای فهمیدن تغییر
+SIGNAL_LOG_PATH = "signal_changes.csv"    # هر تغییر سیگنال با تاریخ و قیمت
+SIGNAL_CHECK_SECONDS = 6 * 3600      # هر ۶ ساعت سیگنال‌ها چک شوند
 API = "https://tapi.bale.ai/bot{token}/{method}"
 DAILY_CACHE_SECONDS = 3600           # قیمت‌های روزانه هر یک ساعت یک بار تازه شوند
 
 BTN_REPORT = "گزارش با جواب‌های قبلی"
 BTN_NEW = "پرسش‌های تازه"
 BTN_DETAILS = "جزئیات کامل"
+BTN_SIGNAL = "📡 سیگنال امروز"
+BTN_ALERT_ON = "🔔 خبرم کن وقتی سیگنال عوض شد"
+BTN_ALERT_OFF = "🔕 دیگر خبرم نکن"
 BTN_CANCEL = "لغو"
 BTN_KEEP = "بله، همین عدد درست است"
 BTN_RETRY = "نه، دوباره وارد می‌کنم"
@@ -90,6 +97,30 @@ def who(msg):
     return name + (f" (@{u['username']})" if u.get("username") else "")
 
 
+def load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (FileNotFoundError, ValueError):
+        return default
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+
+def is_subscribed(chat_id):
+    return str(chat_id) in load_json(SUBS_PATH, [])
+
+
+def set_subscribed(chat_id, on):
+    subs = [x for x in load_json(SUBS_PATH, []) if x != str(chat_id)]
+    if on:
+        subs.append(str(chat_id))
+    save_json(SUBS_PATH, subs)
+
+
 def load_saved():
     try:
         with open(STATE_PATH, encoding="utf-8") as fh:
@@ -123,14 +154,15 @@ class Bale:
             raise RuntimeError(f"{method} failed: {d.get('description', d)}")
         return d.get("result")
 
-    def send(self, chat_id, text, buttons=None, inline=None):
+    def send(self, chat_id, text, buttons=None, inline=None, cols=1):
         """buttons = دکمه‌های پایین صفحه؛ inline = دکمه‌های زیر خود پیام [(متن، داده)، ...]"""
         params = {"chat_id": chat_id, "text": text}
         if inline:
             params["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d}
                                                            for t, d in inline]]}
         elif buttons:
-            params["reply_markup"] = {"keyboard": [[{"text": b}] for b in buttons],
+            params["reply_markup"] = {"keyboard": [[{"text": b} for b in buttons[i:i + cols]]
+                                                   for i in range(0, len(buttons), cols)],
                                       "resize_keyboard": True}
         try:
             self.call("sendMessage", params)
@@ -175,12 +207,21 @@ class Advisor:
     def __init__(self):
         self.daily, self.daily_at = None, 0.0
 
-    def report(self, answers):
+    def daily_prices(self):
         if self.daily is None or time.time() - self.daily_at > DAILY_CACHE_SECONDS:
             self.daily = advisor.fetch_daily()
             self.daily_at = time.time()
+        return self.daily
+
+    def signals(self):
+        """(سیگنال‌ها، قیمت فعلی یا None)"""
+        signals = advisor.trend_signals(self.daily_prices())
+        return signals, self.market_price()
+
+    def report(self, answers):
+        daily = self.daily_prices()
         book = advisor.fetch_book()
-        facts = advisor.compute_facts(answers, self.daily, book)
+        facts = advisor.compute_facts(answers, daily, book)
         opinion = advisor.algorithm_opinion(answers, facts)
         advisor.write_log(answers, facts, opinion)
         return (advisor.short_text(answers, facts, opinion),
@@ -215,7 +256,18 @@ class Conversation:
         buttons = [BTN_REPORT, BTN_NEW] if has_saved else [BTN_NEW]
         if chat_id in self.details:
             buttons = [BTN_DETAILS] + buttons
-        self.bot.send(chat_id, text, buttons)
+        buttons += [BTN_SIGNAL, BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON]
+        self.bot.send(chat_id, text, buttons, cols=2)
+
+    def send_signal(self, chat_id):
+        self.bot.send(chat_id, "در حال گرفتن قیمت‌ها از والکس... (تا ۳۰ ثانیه)")
+        try:
+            signals, price = self.adv.signals()
+        except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
+            print(f" Signal failed: {e}")
+            self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
+            return
+        self.main_menu(chat_id, advisor.signal_text(signals, price))
 
     def start_questions(self, chat_id):
         self.answers[chat_id] = {}
@@ -244,7 +296,7 @@ class Conversation:
         self.bot.send(chat_id, "در حال گرفتن قیمت زنده از والکس... (تا ۳۰ ثانیه)")
         try:
             short, full = self.adv.report(answers)
-        except BaseException as e:      # SystemExit هم از advisor می‌آید
+        except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" Report failed: {e}")
             self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
             return
@@ -255,6 +307,18 @@ class Conversation:
         text = (text or "").strip()
         step = self.step.get(chat_id)
 
+        if text == BTN_SIGNAL:
+            self.step.pop(chat_id, None)
+            self.send_signal(chat_id)
+            return
+        if text in (BTN_ALERT_ON, BTN_ALERT_OFF):
+            self.step.pop(chat_id, None)
+            on = text == BTN_ALERT_ON
+            set_subscribed(chat_id, on)
+            self.main_menu(chat_id, "🔔 روشن شد. هر وقت یکی از سیگنال‌ها عوض شد، همین‌جا خبرتان می‌کنم "
+                                    "(معمولاً چند بار در سال)." if on else
+                                    "🔕 خاموش شد. دیگر خبر تغییر سیگنال نمی‌فرستم.")
+            return
         if text == BTN_DETAILS and chat_id in self.details:
             self.step.pop(chat_id, None)
             self.main_menu(chat_id, self.details[chat_id])
@@ -353,6 +417,37 @@ def handle_button(bot, conv, cq):
                              f"{DENIED_PATH} پاک کنید.)")
 
 
+# ---------------------------------------------------------------- خبر تغییر سیگنال
+
+def check_signal_change(bot, adv):
+    """سیگنال‌ها را با آخرین بار مقایسه می‌کند؛ اگر عوض شده بود به مشترک‌ها خبر می‌دهد."""
+    signals, price = adv.signals()
+    before = load_json(SIGNAL_STATE_PATH, None)
+    changes = []
+    if before is not None:
+        for m, new in signals.items():
+            old = before.get(m)
+            if old is not None and new is not None and old != new:
+                changes.append((m, old, new))
+    # سیگنالی که الان «داده کافی نیست» است، مقدار قبلی‌اش نگه داشته شود
+    state = {m: (v if v is not None else (before or {}).get(m)) for m, v in signals.items()}
+    save_json(SIGNAL_STATE_PATH, state)
+    if not changes:
+        print(f" {pd.Timestamp.now():%Y-%m-%d %H:%M} signal check: no change")
+        return
+    now = pd.Timestamp.now(tz="Asia/Tehran").strftime("%Y-%m-%d %H:%M")
+    rows = [{"changed_at": now, "price": None if price is None else round(price, 2), "method": m,
+             "old": "GOLD" if old else "USDT", "new": "GOLD" if new else "USDT"} for m, old, new in changes]
+    pd.DataFrame(rows).to_csv(SIGNAL_LOG_PATH, mode="a", header=not os.path.exists(SIGNAL_LOG_PATH),
+                              index=False)
+    allowed = read_allowed()
+    subs = [c for c in load_json(SUBS_PATH, []) if c in allowed]
+    print(f" Signal changed: {[r['method'] + ' -> ' + r['new'] for r in rows]}; notifying {len(subs)} people")
+    text = advisor.signal_change_text(changes, signals, price)
+    for c in subs:
+        bot.send(int(c), text)
+
+
 # ---------------------------------------------------------------- حلقه اصلی
 
 def main():
@@ -371,7 +466,14 @@ def main():
     told = set()        # غریبه‌هایی که یک بار جوابشان داده شده (برای جلوگیری از پیام تکراری)
 
     offset = None
+    last_signal_check = 0.0
     while True:
+        if time.time() - last_signal_check >= SIGNAL_CHECK_SECONDS:
+            last_signal_check = time.time()
+            try:
+                check_signal_change(bot, conv.adv)
+            except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
+                print(f" Signal check failed: {e}")
         try:
             params = {"timeout": 30}
             if offset is not None:
