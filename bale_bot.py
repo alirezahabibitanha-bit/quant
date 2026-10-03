@@ -8,7 +8,8 @@ bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
 امنیت:
   - کلید ربات (توکن) در کد نیست. در فایل ~/.bale_token روی سرور نگه داشته می‌شود.
   - فقط کسانی جواب می‌گیرند که شناسه‌شان در فایل ~/.bale_allowed است (هر خط یک شناسه).
-    خط اول = صاحب ربات. آدم جدید که پیام بدهد، به صاحب ربات خبر داده می‌شود.
+    خط اول = صاحب ربات. آدم جدید که پیام بدهد، برای صاحب ربات پیامی با دکمه «تأیید» و «رد» می‌آید.
+    تأیید = شناسه خودکار به فایل اضافه می‌شود. رد = شناسه در ~/.bale_denied می‌رود و دیگر خبری نمی‌آید.
     فایل با هر پیام دوباره خوانده می‌شود؛ بعد از اضافه کردن شناسه، لازم نیست ربات را دوباره روشن کنید.
     اگر این فایل نباشد، ربات به هر کسی فقط شناسه خودش را می‌گوید و گزارشی نمی‌دهد.
 
@@ -27,6 +28,7 @@ import advisor
 
 TOKEN_PATH = os.path.expanduser("~/.bale_token")
 ALLOWED_PATH = os.path.expanduser("~/.bale_allowed")
+DENIED_PATH = os.path.expanduser("~/.bale_denied")
 STATE_PATH = "bale_answers.json"     # آخرین جواب‌ها، برای «گزارش با جواب‌های قبلی»
 API = "https://tapi.bale.ai/bot{token}/{method}"
 DAILY_CACHE_SECONDS = 3600           # قیمت‌های روزانه هر یک ساعت یک بار تازه شوند
@@ -51,15 +53,33 @@ def read_file(path):
         return None
 
 
-def read_allowed():
-    """شناسه‌های مجاز، به ترتیب فایل. خط خالی و خطی که با # شروع شود نادیده گرفته می‌شود."""
-    text = read_file(ALLOWED_PATH) or ""
+def read_ids(path):
+    """شناسه‌های یک فایل، به ترتیب. خط خالی و متن بعد از # نادیده گرفته می‌شود."""
+    text = read_file(path) or ""
     ids = []
     for line in text.splitlines():
         line = line.split("#")[0].strip()
         if line:
             ids.append(line)
     return ids
+
+
+def read_allowed():
+    return read_ids(ALLOWED_PATH)
+
+
+def add_id(path, chat_id, note=""):
+    """یک شناسه را در خط تازه به ته فایل اضافه می‌کند (اگر از قبل نباشد)."""
+    if str(chat_id) in read_ids(path):
+        return
+    prefix = ""
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path, "rb") as fh:
+            fh.seek(-1, os.SEEK_END)
+            if fh.read(1) != b"\n":
+                prefix = "\n"
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(f"{prefix}{chat_id}" + (f"   # {note}" if note else "") + "\n")
 
 
 def who(msg):
@@ -98,9 +118,13 @@ class Bale:
             raise RuntimeError(f"{method} failed: {d.get('description', d)}")
         return d.get("result")
 
-    def send(self, chat_id, text, buttons=None):
+    def send(self, chat_id, text, buttons=None, inline=None):
+        """buttons = دکمه‌های پایین صفحه؛ inline = دکمه‌های زیر خود پیام [(متن، داده)، ...]"""
         params = {"chat_id": chat_id, "text": text}
-        if buttons:
+        if inline:
+            params["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d}
+                                                           for t, d in inline]]}
+        elif buttons:
             params["reply_markup"] = {"keyboard": [[{"text": b}] for b in buttons],
                                       "resize_keyboard": True}
         try:
@@ -279,6 +303,42 @@ class Conversation:
             self.finish(chat_id, a)
 
 
+# ---------------------------------------------------------------- دکمه تأیید / رد
+
+PENDING = {}    # درخواست‌های در انتظار: شناسه -> نام (فقط برای نوشتن کنار شناسه در فایل)
+
+
+def handle_button(bot, conv, cq):
+    """صاحب ربات روی «تأیید» یا «رد» زده است."""
+    try:
+        bot.call("answerCallbackQuery", {"callback_query_id": cq["id"]})
+    except Exception:
+        pass                                   # فقط برای بستن حالت «در حال بارگذاری» است
+    allowed = read_allowed()
+    presser = str((cq.get("from") or {}).get("id"))
+    if not allowed or presser != allowed[0]:
+        print(f" Ignored button from {presser} (not the owner)")
+        return
+    parts = (cq.get("data") or "").split(":")
+    if len(parts) != 2 or not parts[1].lstrip("-").isdigit():
+        return
+    action, target = parts
+    name = PENDING.pop(target, "") if action == "approve" else PENDING.get(target, "")
+    if action == "approve":
+        if target in allowed:
+            bot.send(allowed[0], f"شناسه {target} از قبل مجاز است.")
+            return
+        add_id(ALLOWED_PATH, target, name)
+        print(f" Owner approved chat id {target}")
+        bot.send(allowed[0], f"✅ تأیید شد: {name or target}")
+        conv.main_menu(int(target), "درخواست شما تأیید شد. حالا می‌توانید از ربات استفاده کنید.")
+    elif action == "deny":
+        add_id(DENIED_PATH, target)
+        print(f" Owner denied chat id {target}")
+        bot.send(allowed[0], f"❌ رد شد: {name or target} (شناسه {target})\n(اگر نظرتان عوض شد، این شناسه را از فایل "
+                             f"{DENIED_PATH} پاک کنید.)")
+
+
 # ---------------------------------------------------------------- حلقه اصلی
 
 def main():
@@ -309,6 +369,12 @@ def main():
             continue
         for u in updates:
             offset = u["update_id"] + 1
+            if u.get("callback_query"):
+                try:
+                    handle_button(bot, conv, u["callback_query"])
+                except Exception as e:
+                    print(f" Error while handling button: {e}")
+                continue
             msg = u.get("message") or {}
             chat_id = (msg.get("chat") or {}).get("id")
             if chat_id is None:
@@ -322,14 +388,15 @@ def main():
                 continue
             if str(chat_id) not in allowed:
                 print(f" Message from unknown chat id {chat_id}")
-                if chat_id not in told:
+                if chat_id not in told and str(chat_id) not in read_ids(DENIED_PATH):
                     told.add(chat_id)
-                    bot.send(chat_id, f"این ربات خصوصی است.\nشناسه شما: {chat_id}\n"
-                                      "اگر صاحب ربات شما را می‌شناسد، این عدد را برایش بفرستید.")
+                    bot.send(chat_id, "این ربات خصوصی است. درخواست شما برای صاحب ربات فرستاده شد.\n"
+                                      "اگر تأیید کند، همین‌جا خبرتان می‌کنم.")
+                    PENDING[str(chat_id)] = who(msg)
                     bot.send(allowed[0], f"کسی می‌خواهد از ربات استفاده کند:\n{who(msg)}\n"
-                                         f"شناسه: {chat_id}\n"
-                                         f"برای اجازه دادن، این عدد را در یک خط تازه به فایل "
-                                         f"{ALLOWED_PATH} روی سرور اضافه کنید.")
+                                         f"شناسه: {chat_id}",
+                             inline=[("✅ تأیید", f"approve:{chat_id}"),
+                                     ("❌ رد", f"deny:{chat_id}")])
                 continue
             try:
                 conv.handle(chat_id, msg.get("text"))
