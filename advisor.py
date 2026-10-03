@@ -671,22 +671,18 @@ def two_min_text(bars, price):
     lo1, hi1 = price * np.exp(-sigma), price * np.exp(sigma)
     lo2, hi2 = price * np.exp(-2 * sigma), price * np.exp(2 * sigma)
     now = pd.Timestamp.now(tz="Asia/Tehran")
-    L = [f"⏱ پیش‌بینی ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
-         f"قیمت طلا الان: {fa(price, 1)} تتر", "",
-         "بازه قیمت تا ۲ دقیقه دیگر:",
-         f"• به احتمال زیاد (۲ از ۳): بین {fa(lo1, 1)} و {fa(hi1, 1)}",
-         f"• تقریباً حتماً (۱۹ از ۲۰): بین {fa(lo2, 1)} و {fa(hi2, 1)}",
-         f"(در آزمایش روی ۱۷ هزار کندل ۲ دقیقه‌ای طلا، این بازه‌ها {fa(TWO_MIN_RANGE_HIT[0])}٪ و "
-         f"{fa(TWO_MIN_RANGE_HIT[1])}٪ مواقع درست بودند.)", "",
-         "اندیکاتورهای معروف تریدرها چه می‌گویند:"]
     last = signals(bars).iloc[-1]
-    votes = {}
-    for m, v in last.items():
-        word = "بالا ⬆️" if v > 0 else ("پایین ⬇️" if v < 0 else "نظری ندارد")
-        votes[m] = int(v)
-        L.append(f"• {INDICATOR_FA[m]}: {word} (درستی در آزمایش: {fa(INDICATOR_HIT[m], 1)}٪)")
-    L += ["", "⚠️ هیچ‌کدام از این اندیکاتورها در آزمایش بیشتر از ۵۱٪ درست نگفتند؛ یعنی تقریباً مثل شیر یا خط.",
-          f"حرکت معمول طلا در ۲ دقیقه حدود ۰٫۰۳٪ است، ولی هزینه هر خرید و فروش در والکس حدود ۰٫۴٪ است."]
+    votes = {m: int(v) for m, v in last.items()}
+    up = sum(v > 0 for v in votes.values())
+    down = sum(v < 0 for v in votes.values())
+    parts = [f"{fa(up)} تا می‌گویند بالا" if up else "", f"{fa(down)} تا می‌گویند پایین" if down else ""]
+    said = "، ".join(p for p in parts if p) or "هیچ‌کدام نظری ندارند"
+    L = [f"⏱ ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
+         f"قیمت الان: {fa(price, 1)} تتر", "",
+         f"• به احتمال زیاد بین {fa(lo1, 1)} و {fa(hi1, 1)}",
+         f"• تقریباً حتماً بین {fa(lo2, 1)} و {fa(hi2, 1)}", "",
+         f"اندیکاتورهای تریدرها: {said}.",
+         "ولی در آزمایش، هیچ‌کدام بهتر از شیر یا خط نبودند."]
     row = {"made_at": now.strftime("%Y-%m-%d %H:%M:%S"), "price": round(price, 2),
            "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
            "sure_low": round(lo2, 2), "sure_high": round(hi2, 2),
