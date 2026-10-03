@@ -500,44 +500,43 @@ def short_text(answers, f, opinion):
         advice = "طلایی برای فروش ندارید؛ دارایی شما تتر است."
     L += ["", "🤖 نظر ربات (آزمایشی)", f"• هدف شما «{GOALS[goal][1]}» است: {advice}"]
     if any(v is not None for v in f["signals"].values()):
-        L.append(f"• سیگنال‌ها: {signal_vote(f['signals'])[:-1]}. "
-                 "این روش‌ها در آزمایش ۲۰ ساله از نگه داشتن بهتر نبودند.")
+        L.append(f"• سیگنال: {signal_vote(f['signals'])} (برای جزئیات «📡 سیگنال امروز» را بزنید.)")
     L += ["", "ℹ️ این ربات خرید و فروش انجام نمی‌دهد. برای توضیح بیشتر «جزئیات کامل» را بزنید."]
     return "\n".join(L)
 
 
 # ---------------------------------------------------------------- سیگنال (برای بله)
 
-SIGNAL_PLAIN = {"MA200_MONTHLY": "میانگین ۷ ماه (ماهی یک بار)",
-                "MOM12_MONTHLY": "مقایسه با ۱۲ ماه پیش (ماهی یک بار)",
-                "CROSS_50_200": "میانگین ۲ ماه در برابر ۷ ماه (روزانه)"}
+SIGNAL_PLAIN = {"MA200_MONTHLY": "میانگین ۷ ماه",
+                "MOM12_MONTHLY": "مقایسه با پارسال",
+                "CROSS_50_200": "میانگین ۲ ماه و ۷ ماه"}
+SIGNAL_REMINDER = ("یادآوری: این سیگنال‌ها در ۲۰ سال گذشته سود را بیشتر نکردند؛ "
+                   "فقط در ریزش‌ها ضرر را کمتر کردند. تصمیم با شماست.")
 
 
 def signal_word(v):
-    return "داده کافی نیست" if v is None else ("«طلا نگه دارید»" if v else "«تتر نگه دارید»")
+    return "داده کافی نیست" if v is None else ("طلا 🟡" if v else "تتر 💵")
 
 
 def signal_vote(signals):
+    """یک جمله: اکثر روش‌ها چه می‌گویند."""
     known = [v for v in signals.values() if v is not None]
     if not known:
         return "داده کافی برای سیگنال نیست."
     gold = sum(known)
-    if gold == len(known):
-        return f"هر {fa(len(known))} روش می‌گویند «طلا نگه دارید»."
-    if gold == 0:
-        return f"هر {fa(len(known))} روش می‌گویند «تتر نگه دارید»."
-    return f"{fa(gold)} از {fa(len(known))} روش می‌گویند «طلا نگه دارید»."
-
-
-SIGNAL_REMINDER = ("⚠️ یادآوری: در آزمایش ۲۰ ساله، عمل کردن به این سیگنال‌ها سود را بیشتر نکرد "
-                   "(حدود ۷٪ در سال در برابر ۱۰٪ برای نگه داشتن)، ولی در دوره‌های ریزشی افت را کمتر کرد. "
-                   "تصمیم با شماست.")
+    usdt = len(known) - gold
+    if gold == usdt:
+        return "روش‌ها نظر یکسانی ندارند (نصف طلا، نصف تتر)."
+    side = "طلا" if gold > usdt else "تتر"
+    if min(gold, usdt) == 0:
+        return f"هر {fa(len(known))} روش می‌گویند «{side} نگه دارید»."
+    return f"{fa(max(gold, usdt))} روش از {fa(len(known))} روش می‌گویند «{side} نگه دارید»."
 
 
 def jalali_now():
     now = pd.Timestamp.now(tz="Asia/Tehran")
     jy, jm, jd = to_jalali(now.year, now.month, now.day)
-    return f"{fa(jd)} {FA_MONTHS[jm - 1]} {fa(jy, sep=False)}، ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}"
+    return f"{fa(jd)} {FA_MONTHS[jm - 1]}، ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}"
 
 
 def jalali_date(ts):
@@ -546,34 +545,32 @@ def jalali_date(ts):
 
 
 def signal_text(levels, price):
-    """پیام «سیگنال امروز»: سیگنال هر روش با خط تصمیم و فاصله قیمت از آن."""
+    """پیام «سیگنال امروز»: اول نتیجه، بعد هر روش در دو جمله."""
     signals = {m: v["signal"] for m, v in levels.items()}
     L = [f"📡 سیگنال امروز — {jalali_now()}"]
     if price:
-        L.append(f"قیمت هر واحد طلا الان: {fa(price)} تتر")
+        L.append(f"قیمت طلا: {fa(price)} تتر")
+    L += ["", f"نتیجه: {signal_vote(signals)}"]
     for i, (m, v) in enumerate(levels.items(), 1):
-        L += ["", f"{fa(i)}) {SIGNAL_PLAIN[m]}: {signal_word(v['signal'])}"]
-        line = v["line_next"]
-        if line is None or v["signal"] is None:
+        L += ["", f"{fa(i)}. {SIGNAL_PLAIN[m]}: {signal_word(v['signal'])}"]
+        line, sig = v["line_next"], v["signal"]
+        if line is None or sig is None:
             continue
+        other = "تتر" if sig else "طلا"
         if m == "CROSS_50_200":
-            L.append(f"• میانگین ۲ ماه: {fa(v['short'])} — میانگین ۷ ماه: {fa(line)} تتر")
-            flip = ("وقتی میانگین ۲ ماه زیر میانگین ۷ ماه برود ← «تتر»" if v["signal"]
-                    else "وقتی میانگین ۲ ماه بالای میانگین ۷ ماه برود ← «طلا»")
-            L.append(f"• {flip}")
+            where = "بالای" if sig else "زیر"
+            move = "پایین‌تر" if sig else "بالاتر"
+            L.append(f"میانگین ۲ ماه ({fa(v['short'])}) {where} میانگین ۷ ماه ({fa(line)}) است.")
+            L.append(f"اگر {move} برود، سیگنال «{other}» می‌شود.")
             continue
-        what = "میانگین ۷ ماه اخیر" if m == "MA200_MONTHLY" else "قیمت ۱۲ ماه پیش"
-        L.append(f"• خط تصمیم: {fa(line)} تتر ({what})")
+        what = "میانگین ۷ ماه" if m == "MA200_MONTHLY" else "قیمت پارسال"
         if price:
-            where = "بالاتر" if price >= line else "پایین‌تر"
-            L.append(f"• قیمت الان {fa(abs(price / line - 1) * 100, 1)}٪ {where} از خط است")
-        about = "حدود " if m == "MA200_MONTHLY" else ""
-        cond = f"زیر {about}{fa(line)} ← «تتر»" if v["signal"] else f"بالای {about}{fa(line)} ← «طلا»"
-        L.append(f"• بررسی بعدی {jalali_date(v['next_check'] - pd.Timedelta(days=1))}: "
-                 f"اگر قیمت آن روز {cond}")
-    L += ["", f"جمع: {signal_vote(signals)}", "",
-          "این عددها «خط تصمیم» همین روش‌های تست‌شده‌اند، نه حد سود و ضرر حدسی.",
-          SIGNAL_REMINDER]
+            where = "بالاتر از" if price >= line else "زیر"
+            L.append(f"قیمت {fa(abs(price / line - 1) * 100)}٪ {where} {what} ({fa(line)}) است.")
+        cond = "زیر" if sig else "بالای"
+        L.append(f"اگر آخر ماه ({jalali_date(v['next_check'] - pd.Timedelta(days=1))}) قیمت {cond} "
+                 f"{fa(line)} باشد، سیگنال «{other}» می‌شود.")
+    L += ["", SIGNAL_REMINDER]
     return "\n".join(L)
 
 
@@ -581,11 +578,11 @@ def signal_change_text(changes, signals, price):
     """پیام خبر تغییر سیگنال. changes = [(روش، قبلی، الان)، ...]"""
     L = [f"🔔 سیگنال عوض شد — {jalali_now()}"]
     if price:
-        L.append(f"قیمت هر واحد طلا: {fa(price)} تتر")
+        L.append(f"قیمت طلا: {fa(price)} تتر")
     L.append("")
     for m, old, new in changes:
-        L.append(f"• {SIGNAL_PLAIN[m]}: حالا می‌گوید {signal_word(new)} (قبلاً: {signal_word(old)})")
-    L += ["", f"جمع: {signal_vote(signals)}", "", SIGNAL_REMINDER]
+        L.append(f"• {SIGNAL_PLAIN[m]}: از «{'طلا' if old else 'تتر'}» به «{'طلا' if new else 'تتر'}» عوض شد.")
+    L += ["", f"نتیجه: {signal_vote(signals)}", "", SIGNAL_REMINDER]
     return "\n".join(L)
 
 
