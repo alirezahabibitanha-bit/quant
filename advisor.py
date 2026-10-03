@@ -586,6 +586,48 @@ def signal_change_text(changes, signals, price):
     return "\n".join(L)
 
 
+# ---------------------------------------------------------------- پیش‌بینی حدودی (برای بله)
+
+FORECAST_LOOKBACK = 84        # روز تقویمی ≈ ۶۰ روز کاری، همان که forecast_check.py تست کرده
+FORECAST_HORIZONS = ((7, "تا یک هفته دیگر"), (30, "تا یک ماه دیگر"))
+FORECAST_HIT = (69, 94)       # درصد درستی بازه‌ها در ۲۱ سال (خروجی forecast_check.py)
+FORECAST_LOG_PATH = "forecast_log.csv"
+
+
+def price_range(daily, price, days):
+    """بازه احتمالی قیمت بعد از days روز: (پایین، بالا) برای «به احتمال زیاد» و «تقریباً حتماً».
+    مرکز بازه قیمت امروز است؛ جهت را حدس نمی‌زنیم، فقط اندازه تکان‌های اخیر را می‌گیریم."""
+    sig = float(np.log(daily).diff().dropna().iloc[-FORECAST_LOOKBACK:].std())
+    s = sig * np.sqrt(days)
+    return (price * np.exp(-s), price * np.exp(s)), (price * np.exp(-2 * s), price * np.exp(2 * s))
+
+
+def forecast_text(daily, price):
+    """پیام «پیش‌بینی حدودی» + ثبت در لاگ برای سنجش بعدی."""
+    if price is None:
+        price = float(daily.iloc[-1])
+    L = [f"🔮 پیش‌بینی حدودی — {jalali_now()}", f"قیمت طلا الان: {fa(price)} تتر", "",
+         "هیچ‌کس نمی‌داند طلا بالا می‌رود یا پایین. ولی از تکان‌های اخیرش می‌شود گفت "
+         "قیمت احتمالاً در چه بازه‌ای می‌ماند:"]
+    rows = []
+    now = pd.Timestamp.now(tz="Asia/Tehran").strftime("%Y-%m-%d %H:%M")
+    for days, label in FORECAST_HORIZONS:
+        (lo1, hi1), (lo2, hi2) = price_range(daily, price, days)
+        L += ["", f"{label}:",
+              f"• به احتمال زیاد (۲ از ۳): بین {fa(lo1)} و {fa(hi1)}",
+              f"• تقریباً حتماً (۱۹ از ۲۰): بین {fa(lo2)} و {fa(hi2)}"]
+        rows.append({"made_at": now, "price": round(price, 2), "days": days,
+                     "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
+                     "sure_low": round(lo2, 2), "sure_high": round(hi2, 2)})
+    L += ["", f"این روش در ۲۱ سال گذشته آزمایش شده: قیمت واقعی {fa(FORECAST_HIT[0])}٪ مواقع داخل بازه اول "
+              f"و {fa(FORECAST_HIT[1])}٪ مواقع داخل بازه دوم ماند.",
+          "یعنی حدود یک بار از هر ۲۰ بار، حرکتی بزرگ‌تر از این هم پیش می‌آید.",
+          "روند فعلی در این پیش‌بینی نیامده، چون در آزمایش ما جهت قیمت را درست پیش‌بینی نکرد."]
+    pd.DataFrame(rows).to_csv(FORECAST_LOG_PATH, mode="a", header=not os.path.exists(FORECAST_LOG_PATH),
+                              index=False)
+    return "\n".join(L)
+
+
 def write_report(answers, f, opinion):
     with open(REPORT_PATH, "w", encoding="utf-8") as fh:
         fh.write(report_text(answers, f, opinion))

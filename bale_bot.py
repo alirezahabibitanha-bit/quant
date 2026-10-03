@@ -41,6 +41,7 @@ BTN_REPORT = "گزارش با جواب‌های قبلی"
 BTN_NEW = "پرسش‌های تازه"
 BTN_DETAILS = "جزئیات کامل"
 BTN_SIGNAL = "📡 سیگنال امروز"
+BTN_FORECAST = "🔮 پیش‌بینی حدودی"
 BTN_ALERT_ON = "🔔 خبرم کن وقتی سیگنال عوض شد"
 BTN_ALERT_OFF = "🔕 دیگر خبرم نکن"
 BTN_CANCEL = "لغو"
@@ -255,8 +256,18 @@ class Conversation:
         buttons = [BTN_REPORT, BTN_NEW] if has_saved else [BTN_NEW]
         if chat_id in self.details:
             buttons = [BTN_DETAILS] + buttons
-        buttons += [BTN_SIGNAL, BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON]
+        buttons += [BTN_SIGNAL, BTN_FORECAST, BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON]
         self.bot.send(chat_id, text, buttons, cols=2)
+
+    def send_forecast(self, chat_id):
+        self.bot.send(chat_id, "در حال گرفتن قیمت‌ها از والکس... (تا ۳۰ ثانیه)")
+        try:
+            text = advisor.forecast_text(self.adv.daily_prices(), self.adv.market_price())
+        except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
+            print(f" Forecast failed: {e}")
+            self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
+            return
+        self.main_menu(chat_id, text)
 
     def send_signal(self, chat_id):
         self.bot.send(chat_id, "در حال گرفتن قیمت‌ها از والکس... (تا ۳۰ ثانیه)")
@@ -306,6 +317,10 @@ class Conversation:
         text = (text or "").strip()
         step = self.step.get(chat_id)
 
+        if text == BTN_FORECAST:
+            self.step.pop(chat_id, None)
+            self.send_forecast(chat_id)
+            return
         if text == BTN_SIGNAL:
             self.step.pop(chat_id, None)
             self.send_signal(chat_id)
