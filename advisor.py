@@ -229,7 +229,8 @@ def print_summary(answers, f, opinion):
     print(f" Logged to          : {LOG_PATH}")
 
 
-def write_report(answers, f, opinion):
+def report_text(answers, f, opinion):
+    """متن کامل گزارش فارسی (برای فایل و برای ربات بله)."""
     now = pd.Timestamp.now(tz="Asia/Tehran")
     vol_fa = {"HIGH": "بالاتر از حالت عادی (بازار پرتلاطم است)",
               "NORMAL": "در حد عادی", "CALM": "آرام‌تر از حالت عادی",
@@ -274,9 +275,12 @@ def write_report(answers, f, opinion):
     L.append("## بخش ۲: نظر الگوریتم (آزمایشی و ثابت‌نشده)\n")
     L.append("> این بخش هنوز با داده‌های گذشته ثابت نشده است. آن را قطعی ندانید.\n")
     L.append(f"- {opinion[1]}\n")
+    return "\n".join(L)
 
+
+def write_report(answers, f, opinion):
     with open(REPORT_PATH, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(L))
+        fh.write(report_text(answers, f, opinion))
 
 
 def write_log(answers, f, opinion):
