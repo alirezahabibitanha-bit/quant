@@ -407,6 +407,96 @@ def report_text(answers, f, opinion):
     return "\n".join(L)
 
 
+# ---------------------------------------------------------------- گزارش کوتاه (برای بله)
+
+FA_MONTHS = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+             "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"]
+
+
+def to_jalali(gy, gm, gd):
+    """تاریخ میلادی به شمسی (الگوریتم استاندارد)."""
+    g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
+    gy2 = gy + 1 if gm > 2 else gy
+    days = (355666 + 365 * gy + (gy2 + 3) // 4 - (gy2 + 99) // 100 + (gy2 + 399) // 400
+            + gd + g_d_m[gm - 1])
+    jy = -1595 + 33 * (days // 12053)
+    days %= 12053
+    jy += 4 * (days // 1461)
+    days %= 1461
+    if days > 365:
+        jy += (days - 1) // 365
+        days = (days - 1) % 365
+    if days < 186:
+        return jy, 1 + days // 31, 1 + days % 31
+    return jy, 7 + (days - 186) // 30, 1 + (days - 186) % 30
+
+
+def fa(x, decimals=0, sep=True):
+    """عدد با رقم و جداکننده فارسی، بدون علامت + و - (جهت را با کلمه می‌گوییم)."""
+    text = f"{abs(x):,.{decimals}f}" if sep else f"{abs(x):.{decimals}f}"
+    return text.translate(str.maketrans("0123456789,.", "۰۱۲۳۴۵۶۷۸۹٬٫"))
+
+
+def short_text(answers, f, opinion):
+    """گزارش کوتاه و ساده برای پیام بله. جزئیات کامل در report_text است."""
+    now = pd.Timestamp.now(tz="Asia/Tehran")
+    jy, jm, jd = to_jalali(now.year, now.month, now.day)
+    L = [f"📊 گزارش طلا و تتر — {fa(jd)} {FA_MONTHS[jm - 1]} {fa(jy, sep=False)}، "
+         f"ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}"]
+    if not f["book_live"]:
+        L.append("⚠️ قیمت زنده گرفته نشد؛ آخرین قیمت دیروز استفاده شد.")
+    xaut = answers["xaut"]
+
+    L += ["", "💰 دارایی شما",
+          f"• کل: {fa(f['total_now'])} تتر ({fa(f['gold_share'] * 100)}٪ طلا)"]
+    if xaut > 0:
+        L.append(f"• طلا: {fa(xaut, 4).rstrip('۰').rstrip('٫')} واحد (حدود {fa(grams(xaut))} گرم)")
+        word = "سود" if f["pnl"] >= 0 else "زیان"
+        L.append(f"• اگر الان بفروشید: {fa(f['pnl'])} تتر {word} ({fa(f['pnl_pct'] * 100, 1)}٪)")
+        L.append(f"• قیمت سر به سر: {fa(f['breakeven_bid'])} تتر (بالاتر از این، فروش ضرر ندارد)")
+        if price_looks_wrong(answers["buy_price"], f["mid"]):
+            L.append("⚠️ قیمت خریدی که وارد کردید خیلی با قیمت امروز فرق دارد؛ شاید قیمت هر گرم بوده.")
+
+    L += ["", "🏷 قیمت هر واحد طلا الان",
+          f"• فروش: {fa(f['bid'])} تتر — خرید: {fa(f['ask'])} تتر",
+          f"• هزینه هر فروش: {fa(f['sell_cost'] * 100, 1)}٪"
+          + (f" (برای همه طلای شما حدود {fa(xaut * f['mid'] * f['sell_cost'])} تتر)" if xaut > 0 else "")]
+
+    trend = {"UP": "رو به بالا", "DOWN": "رو به پایین", "UNKNOWN": "معلوم نیست (داده کم است)"}[f["trend"]]
+    L += ["", "📈 حال بازار", f"• روند: {trend}"]
+    if f["vs_ma200"] is not None:
+        where = "بالاتر" if f["vs_ma200"] >= 0 else "پایین‌تر"
+        L[-1] += f" — قیمت {fa(abs(f['vs_ma200']) * 100)}٪ {where} از میانگین ۷ ماه اخیر"
+    vol = {"HIGH": "زیاد (قیمت تند بالا و پایین می‌رود)", "NORMAL": "عادی",
+           "CALM": "کم (بازار آرام است)", "UNKNOWN": "معلوم نیست"}[f["vol_state"]]
+    L.append(f"• تلاطم: {vol}")
+    L.append(f"• نسبت به بالاترین قیمت یک سال اخیر: {fa(abs(f['from_year_high']) * 100)}٪ پایین‌تر")
+
+    goal = answers["goal"]
+    if goal == "1":
+        advice = "نگه دارید و کمتر خرید و فروش کنید."
+    elif goal == "2":
+        advice = "در ۲۰ سال گذشته، نگه داشتن بیشتر از خرید و فروش مکرر سود داده است."
+    elif xaut > 0:
+        advice = (f"فروش همه طلا الان حدود {fa(xaut * f['mid'] * f['sell_cost'])} تتر هزینه دارد. "
+                  "درباره زمان فروش نظری نمی‌دهیم.")
+    else:
+        advice = "طلایی برای فروش ندارید؛ دارایی شما تتر است."
+    L += ["", "🤖 نظر ربات (آزمایشی)", f"• هدف شما «{GOALS[goal][1]}» است: {advice}"]
+    known = [v for v in f["signals"].values() if v is not None]
+    if known:
+        gold = sum(known)
+        if gold == len(known):
+            vote = f"هر {fa(len(known))} روش می‌گویند «طلا نگه دارید»"
+        elif gold == 0:
+            vote = f"هر {fa(len(known))} روش می‌گویند «تتر نگه دارید»"
+        else:
+            vote = f"{fa(gold)} از {fa(len(known))} روش می‌گویند «طلا نگه دارید»"
+        L.append(f"• سیگنال‌ها: {vote}. این روش‌ها در آزمایش ۲۰ ساله از نگه داشتن بهتر نبودند.")
+    L += ["", "ℹ️ این ربات خرید و فروش انجام نمی‌دهد. برای توضیح بیشتر «جزئیات کامل» را بزنید."]
+    return "\n".join(L)
+
+
 def write_report(answers, f, opinion):
     with open(REPORT_PATH, "w", encoding="utf-8") as fh:
         fh.write(report_text(answers, f, opinion))

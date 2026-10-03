@@ -35,6 +35,7 @@ DAILY_CACHE_SECONDS = 3600           # قیمت‌های روزانه هر یک 
 
 BTN_REPORT = "گزارش با جواب‌های قبلی"
 BTN_NEW = "پرسش‌های تازه"
+BTN_DETAILS = "جزئیات کامل"
 BTN_CANCEL = "لغو"
 BTN_KEEP = "بله، همین عدد درست است"
 BTN_RETRY = "نه، دوباره وارد می‌کنم"
@@ -182,7 +183,8 @@ class Advisor:
         facts = advisor.compute_facts(answers, self.daily, book)
         opinion = advisor.algorithm_opinion(answers, facts)
         advisor.write_log(answers, facts, opinion)
-        return plain(advisor.report_text(answers, facts, opinion))
+        return (advisor.short_text(answers, facts, opinion),
+                plain(advisor.report_text(answers, facts, opinion)))
 
     @staticmethod
     def market_price():
@@ -191,11 +193,11 @@ class Advisor:
         return None if book is None else (book["bid"] + book["ask"]) / 2
 
 
-Q_USDT = "۱) چند تتر (USDT) دارید؟\nهر ۱ تتر تقریباً ۱ دلار است. فقط عدد بنویسید، مثلاً 250"
+Q_USDT = "۱) چند تتر (USDT) دارید؟\nهر ۱ تتر تقریباً ۱ دلار است. فقط عدد بنویسید، مثلاً ۲۵۰"
 Q_XAUT = ("۲) چقدر طلا دارید؟\n"
           "به واحد XAUT، همان عددی که در کیف پول والکس می‌بینید.\n"
-          "هر ۱ XAUT = ۱ اونس ≈ ۳۱٫۱ گرم طلا. مثلاً 0.05\n"
-          "اگر طلا ندارید 0 بنویسید.")
+          "هر ۱ XAUT = ۱ اونس ≈ ۳۱٫۱ گرم طلا. مثلاً ۰٫۰۵\n"
+          "اگر طلا ندارید ۰ بنویسید.")
 
 
 # ---------------------------------------------------------------- گفتگو
@@ -206,10 +208,13 @@ class Conversation:
     def __init__(self, bot, adv):
         self.bot, self.adv = bot, adv
         self.step, self.answers, self.market = {}, {}, {}
+        self.details = {}       # گزارش کامل آخرین گزارش هر نفر، برای دکمه «جزئیات کامل»
 
     def main_menu(self, chat_id, text):
         has_saved = str(chat_id) in load_saved()
         buttons = [BTN_REPORT, BTN_NEW] if has_saved else [BTN_NEW]
+        if chat_id in self.details:
+            buttons = [BTN_DETAILS] + buttons
         self.bot.send(chat_id, text, buttons)
 
     def start_questions(self, chat_id):
@@ -221,7 +226,7 @@ class Conversation:
         self.step[chat_id] = "buy_price"
         price = self.adv.market_price()
         self.market[chat_id] = price
-        hint = f"\nقیمت الان حدود {price:,.0f} تتر است." if price else ""
+        hint = f"\nقیمت الان حدود {advisor.fa(price)} تتر است." if price else ""
         self.bot.send(chat_id, "میانگین قیمت خرید طلا چقدر بوده؟\n"
                                "به تتر، برای هر ۱ XAUT (یعنی قیمت هر اونس، نه هر گرم)." + hint,
                       [BTN_CANCEL])
@@ -238,17 +243,22 @@ class Conversation:
     def send_report(self, chat_id, answers):
         self.bot.send(chat_id, "در حال گرفتن قیمت زنده از والکس... (تا ۳۰ ثانیه)")
         try:
-            text = self.adv.report(answers)
+            short, full = self.adv.report(answers)
         except BaseException as e:      # SystemExit هم از advisor می‌آید
             print(f" Report failed: {e}")
             self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
             return
-        self.main_menu(chat_id, text)
+        self.details[chat_id] = full
+        self.main_menu(chat_id, short)
 
     def handle(self, chat_id, text):
         text = (text or "").strip()
         step = self.step.get(chat_id)
 
+        if text == BTN_DETAILS and chat_id in self.details:
+            self.step.pop(chat_id, None)
+            self.main_menu(chat_id, self.details[chat_id])
+            return
         if text in ("/start", BTN_CANCEL) or (step is None and text not in (BTN_REPORT, BTN_NEW)):
             self.step.pop(chat_id, None)
             self.main_menu(chat_id, "سلام. من مشاور طلا و تتر هستم و هیچ خرید و فروشی انجام نمی‌دهم.\n"
@@ -269,7 +279,7 @@ class Conversation:
         if step in ("usdt", "xaut", "buy_price"):
             value = parse_number(text)
             if value is None or (step == "buy_price" and value == 0):
-                self.bot.send(chat_id, "لطفاً فقط یک عدد مثبت بنویسید، مثلاً 250 یا 0.5", [BTN_CANCEL])
+                self.bot.send(chat_id, "لطفاً فقط یک عدد مثبت بنویسید، مثلاً ۲۵۰ یا ۰٫۵", [BTN_CANCEL])
                 return
             a[step] = value
             if step == "usdt":
@@ -282,8 +292,8 @@ class Conversation:
                 self.ask_goal(chat_id)
             elif advisor.price_looks_wrong(value, self.market.get(chat_id)):
                 self.step[chat_id] = "confirm_price"
-                self.bot.send(chat_id, f"⚠️ قیمت {value:,.2f} خیلی با قیمت امروز "
-                                       f"({self.market[chat_id]:,.0f}) فرق دارد.\n"
+                self.bot.send(chat_id, f"⚠️ قیمت {advisor.fa(value, 2)} خیلی با قیمت امروز "
+                                       f"({advisor.fa(self.market[chat_id])}) فرق دارد.\n"
                                        "شاید قیمت هر گرم را زده‌اید؟ قیمت باید برای هر ۱ XAUT (هر اونس) باشد.",
                               [BTN_KEEP, BTN_RETRY, BTN_CANCEL])
             else:
