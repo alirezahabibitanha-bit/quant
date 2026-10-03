@@ -231,3 +231,4 @@ signal_changes.csv
 forecast_log.csv
 forecast_2min_log.csv
 forecast_shadow_log.csv
+forecast_2min_trial_log.csv

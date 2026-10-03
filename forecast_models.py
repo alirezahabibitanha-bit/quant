@@ -224,6 +224,31 @@ def two_min_section():
     return out, dm, ok, len(t), (t.time.iloc[0], t.time.iloc[-1])
 
 
+# ---------------------------------------------------------------- برای ربات: ضریب ساعت (آزمایشی)
+
+HOUR_FACTOR_LIMITS = (0.25, 4.0)   # ساعت تعطیلی بورس آمریکا تقریباً صفر درمی‌آید ولی والکس آن موقع هم باز است
+
+
+def hour_factors(path=TWO_MIN):
+    """شلوغی هر ساعت (به وقت جهانی UTC) نسبت به میانگین، از داده ۲ دقیقه‌ای طلای جهانی. {ساعت: ضریب}"""
+    df = pd.read_csv(path, parse_dates=["time"]).sort_values("time")
+    lr = np.log(df.close).diff()
+    lr[df.time.diff() != pd.Timedelta(minutes=2)] = np.nan
+    sq = lr ** 2
+    f = (sq.groupby(df.time.dt.hour).mean() / sq.mean()).clip(*HOUR_FACTOR_LIMITS)
+    return {h: float(f.get(h, 1.0)) for h in range(24)}
+
+
+def two_min_sigma_hour(close, times, factors, lam=0.94):
+    """نوسان کندل ۲ دقیقه‌ای بعد، با حذف و اضافه کردن اثر ساعت. times به وقت UTC."""
+    hours = pd.DatetimeIndex(times).hour
+    fac = np.array([factors.get(h, 1.0) for h in hours])
+    r = np.log(np.asarray(close, float))
+    r = np.r_[0.0, np.diff(r)] / np.sqrt(fac)
+    nxt = pd.Timestamp(times[-1]) + pd.Timedelta(minutes=2)
+    return float(np.sqrt(ewma_var(r, lam)[-1] * factors.get(nxt.hour, 1.0)))
+
+
 # ---------------------------------------------------------------- گزارش
 
 FA_MODEL = {"CURRENT": "فعلی ربات (نوسان ساده ۶۰ روزه)", "EWMA": "EWMA", "GARCH": "GARCH(1,1)", "HAR": "HAR",
