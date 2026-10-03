@@ -660,6 +660,8 @@ def shadow_forecast(daily, price, now):
 # ---------------------------------------------------------------- پیش‌بینی ۲ دقیقه (برای بله)
 
 TWO_MIN_LOG_PATH = "forecast_2min_log.csv"
+TWO_MIN_TRIAL_LOG_PATH = "forecast_2min_trial_log.csv"   # روش آزمایشی اثر ساعت (forecast_models.py)
+_HOUR_FACTORS = None              # یک بار از data/GC_F_2m.csv خوانده می‌شود
 TWO_MIN_RANGE_HIT = (72, 94)      # درستی بازه ۲ دقیقه در آزمایش (خروجی backtest_2min.py)
 INDICATOR_HIT = {"RSI(14)": 51.3, "MACD(12,26,9)": 50.5, "Bollinger(20,2)": 50.6,
                  "SMA 9/21 cross": 50.5, "Momentum(1)": 49.5}   # درصد درستی جهت در همان آزمایش
@@ -687,7 +689,8 @@ def fetch_minutes(hours=4):
         bars = bars.iloc[:-1]                  # کندل نیمه‌کاره
     if len(bars) < 40:
         raise SystemExit("Not enough minute data.")
-    return bars.reset_index(drop=True)
+    bars.index.name = "time"                   # زمان شروع کندل به وقت UTC (برای روش آزمایشی ساعت)
+    return bars.reset_index()
 
 
 def two_min_text(bars, price):
@@ -725,7 +728,38 @@ def two_min_text(bars, price):
            **{INDICATOR_LOG[m]: v for m, v in votes.items()}}
     pd.DataFrame([row]).to_csv(TWO_MIN_LOG_PATH, mode="a", header=not os.path.exists(TWO_MIN_LOG_PATH),
                                index=False)
+    trial = two_min_trial(bars, price, row["made_at"])
+    if trial:
+        lo, hi, busy = trial
+        L += ["", "🧪 آزمایشی — روش دوم (با حساب ساعت روز):",
+              f"به احتمال زیاد بین {fa(lo)} و {fa(hi)} تتر.",
+              "این روش می‌داند بعدازظهر تهران (وقت اخبار آمریکا) بازار تندتر تکان می‌خورد و نیمه‌شب آرام‌تر"
+              + ("؛ الان ساعت شلوغ است." if busy else "."),
+              "در آزمایش کمی بهتر بود ولی نه آن‌قدر که مطمئن باشیم. فقط برای مقایسه است."]
     return "\n".join(L)
+
+
+def two_min_trial(bars, price, made_at):
+    """بازه آزمایشی ۲ دقیقه با اثر ساعت روز (forecast_models.py، قبول نشد: آماره ‎-1.16).
+    ثبت در لاگ جدا و برگرداندن (پایین، بالا، ساعت شلوغ است؟). اگر خطا داد None."""
+    try:
+        from forecast_models import hour_factors, two_min_sigma_hour
+        global _HOUR_FACTORS
+        if _HOUR_FACTORS is None:
+            _HOUR_FACTORS = hour_factors()
+        sigma = two_min_sigma_hour(bars.close.values, bars.time.values, _HOUR_FACTORS)
+        nxt_hour = (pd.Timestamp(bars.time.iloc[-1]) + pd.Timedelta(minutes=2)).hour
+        lo, hi = price * np.exp(-sigma), price * np.exp(sigma)
+        row = {"made_at": made_at, "price": round(price, 2), "model": "EWMA_HOUR",
+               "hour_factor": round(_HOUR_FACTORS[nxt_hour], 2),
+               "likely_low": round(lo, 2), "likely_high": round(hi, 2),
+               "sure_low": round(price * np.exp(-2 * sigma), 2), "sure_high": round(price * np.exp(2 * sigma), 2)}
+        pd.DataFrame([row]).to_csv(TWO_MIN_TRIAL_LOG_PATH, mode="a",
+                                   header=not os.path.exists(TWO_MIN_TRIAL_LOG_PATH), index=False)
+        return lo, hi, _HOUR_FACTORS[nxt_hour] > 1.2
+    except Exception as e:
+        print(f" 2-minute trial skipped: {e}")
+        return None
 
 
 def write_report(answers, f, opinion):
