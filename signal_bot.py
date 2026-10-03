@@ -34,7 +34,7 @@ MARKETS = {
     "PAXGTMN":  {"fee": 0.0035, "spread": 0.015},
     "PAXGUSDT": {"fee": 0.0020, "spread": 0.0195},
     "XAUTTMN":  {"fee": 0.0035, "spread": 0.015},
-    "XAUTUSDT": {"fee": 0.0020, "spread": 0.0195},
+    "XAUTUSDT": {"fee": 0.0020, "spread": 0.005},
 }
 DEFAULT_SYMBOLS = ["USDTTMN", "PAXGTMN"]
 HEADERS = {"User-Agent": "quant-research/1.0"}
