@@ -1,0 +1,36 @@
+# bale-bot.service - روشن کردن خودکار ربات بله با روشن شدن سرور
+#
+# این فایل به لینوکس می‌گوید:
+#   - ربات را با روشن شدن سرور اجرا کن
+#   - اگر ربات به هر دلیلی بسته شد، بعد از ۱۰ ثانیه دوباره روشنش کن
+#
+# نصب (یک بار، روی سرور):
+#   1. اگر ربات در screen روشن است، اول آن را ببندید:   screen -S bale -X quit
+#   2. این فایل را کپی کنید:   cp ~/quant/bale-bot.service /etc/systemd/system/
+#   3. لینوکس را باخبر کنید:   systemctl daemon-reload
+#   4. روشن کنید و برای روشن شدن خودکار ثبت کنید:   systemctl enable --now bale-bot
+#
+# دستورهای روزمره:
+#   وضعیت:          systemctl status bale-bot
+#   پیام‌های ربات:   journalctl -u bale-bot -n 30
+#   روشن کردن دوباره (بعد از عوض کردن کد):   systemctl restart bale-bot
+#   خاموش کردن:     systemctl stop bale-bot
+#
+# اگر پوشه پروژه جای دیگری است، /root/quant را در دو خط پایین عوض کنید.
+
+[Unit]
+Description=Bale bot for the personal gold/USDT advisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/root/quant
+ExecStart=/usr/bin/python3 /root/quant/bale_bot.py
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

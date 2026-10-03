@@ -10,8 +10,9 @@ bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
   - فقط یک نفر (صاحب ربات) جواب می‌گیرد. شناسه او در فایل ~/.bale_allowed است.
     اگر این فایل نباشد، ربات به هر کسی فقط شناسه خودش را می‌گوید و گزارشی نمی‌دهد.
 
-اجرا (روی سرور، داخل screen):
-  python3 bale_bot.py
+اجرا:
+  python3 bale_bot.py                 # برای امتحان
+  دائمی: با فایل bale-bot.service (راهنما داخل همان فایل)
 """
 import json
 import os
@@ -31,6 +32,8 @@ DAILY_CACHE_SECONDS = 3600           # قیمت‌های روزانه هر یک 
 BTN_REPORT = "گزارش با جواب‌های قبلی"
 BTN_NEW = "پرسش‌های تازه"
 BTN_CANCEL = "لغو"
+BTN_KEEP = "بله، همین عدد درست است"
+BTN_RETRY = "نه، دوباره وارد می‌کنم"
 GOAL_BUTTONS = {"1": "۱ - نگه داشتن بلندمدت", "2": "۲ - سود بیشتر", "3": "۳ - نقد کردن سریع"}
 
 FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫", "01234567890123456789.")
@@ -133,6 +136,19 @@ class Advisor:
         advisor.write_log(answers, facts, opinion)
         return plain(advisor.report_text(answers, facts, opinion))
 
+    @staticmethod
+    def market_price():
+        """قیمت وسط بازار همین الان؛ اگر نشد None."""
+        book = advisor.fetch_book()
+        return None if book is None else (book["bid"] + book["ask"]) / 2
+
+
+Q_USDT = "۱) چند تتر (USDT) دارید؟\nهر ۱ تتر تقریباً ۱ دلار است. فقط عدد بنویسید، مثلاً 250"
+Q_XAUT = ("۲) چقدر طلا دارید؟\n"
+          "به واحد XAUT، همان عددی که در کیف پول والکس می‌بینید.\n"
+          "هر ۱ XAUT = ۱ اونس ≈ ۳۱٫۱ گرم طلا. مثلاً 0.05\n"
+          "اگر طلا ندارید 0 بنویسید.")
+
 
 # ---------------------------------------------------------------- گفتگو
 
@@ -141,7 +157,7 @@ class Conversation:
 
     def __init__(self, bot, adv):
         self.bot, self.adv = bot, adv
-        self.step, self.answers = {}, {}
+        self.step, self.answers, self.market = {}, {}, {}
 
     def main_menu(self, chat_id, text):
         has_saved = str(chat_id) in load_saved()
@@ -151,7 +167,20 @@ class Conversation:
     def start_questions(self, chat_id):
         self.answers[chat_id] = {}
         self.step[chat_id] = "usdt"
-        self.bot.send(chat_id, "۱) چقدر تتر دارید؟ (فقط عدد، مثلاً 250)", [BTN_CANCEL])
+        self.bot.send(chat_id, Q_USDT, [BTN_CANCEL])
+
+    def ask_buy_price(self, chat_id):
+        self.step[chat_id] = "buy_price"
+        price = self.adv.market_price()
+        self.market[chat_id] = price
+        hint = f"\nقیمت الان حدود {price:,.0f} تتر است." if price else ""
+        self.bot.send(chat_id, "میانگین قیمت خرید طلا چقدر بوده؟\n"
+                               "به تتر، برای هر ۱ XAUT (یعنی قیمت هر اونس، نه هر گرم)." + hint,
+                      [BTN_CANCEL])
+
+    def ask_goal(self, chat_id):
+        self.step[chat_id] = "goal"
+        self.bot.send(chat_id, "۳) هدف شما چیست؟", list(GOAL_BUTTONS.values()) + [BTN_CANCEL])
 
     def finish(self, chat_id, answers):
         self.step.pop(chat_id, None)
@@ -197,15 +226,28 @@ class Conversation:
             a[step] = value
             if step == "usdt":
                 self.step[chat_id] = "xaut"
-                self.bot.send(chat_id, "۲) چقدر طلا (XAUT) دارید؟ (اگر ندارید 0 بنویسید)", [BTN_CANCEL])
+                self.bot.send(chat_id, Q_XAUT, [BTN_CANCEL])
             elif step == "xaut" and value > 0:
-                self.step[chat_id] = "buy_price"
-                self.bot.send(chat_id, "میانگین قیمت خرید طلا چند تتر بوده؟ (مثلاً 4100)", [BTN_CANCEL])
+                self.ask_buy_price(chat_id)
+            elif step == "xaut":
+                a["buy_price"] = None
+                self.ask_goal(chat_id)
+            elif advisor.price_looks_wrong(value, self.market.get(chat_id)):
+                self.step[chat_id] = "confirm_price"
+                self.bot.send(chat_id, f"⚠️ قیمت {value:,.2f} خیلی با قیمت امروز "
+                                       f"({self.market[chat_id]:,.0f}) فرق دارد.\n"
+                                       "شاید قیمت هر گرم را زده‌اید؟ قیمت باید برای هر ۱ XAUT (هر اونس) باشد.",
+                              [BTN_KEEP, BTN_RETRY, BTN_CANCEL])
             else:
-                if step == "xaut":
-                    a["buy_price"] = None
-                self.step[chat_id] = "goal"
-                self.bot.send(chat_id, "۳) هدف شما چیست؟", list(GOAL_BUTTONS.values()) + [BTN_CANCEL])
+                self.ask_goal(chat_id)
+            return
+        if step == "confirm_price":
+            if text == BTN_KEEP:
+                self.ask_goal(chat_id)
+            elif text == BTN_RETRY:
+                self.ask_buy_price(chat_id)
+            else:
+                self.bot.send(chat_id, "لطفاً یکی از دکمه‌ها را بزنید.", [BTN_KEEP, BTN_RETRY, BTN_CANCEL])
             return
         if step == "goal":
             goal = parse_goal(text)

@@ -33,6 +33,8 @@ TREND_DAYS = 200         # میانگین ۲۰۰ روزه
 VOL_DAYS = 20            # نوسان «امروز» = نوسان ۲۰ روز اخیر
 VOL_HIGH = 1.5           # بیش از ۱.۵ برابر حالت عادی = پرنوسان
 VOL_CALM = 0.75          # کمتر از ۰.۷۵ برابر حالت عادی = آرام
+GRAMS_PER_XAUT = 31.1035 # هر ۱ XAUT = ۱ اونس طلا ≈ ۳۱.۱ گرم
+PRICE_CHECK = (0.5, 2.0) # قیمت خرید کمتر از نصف یا بیشتر از دو برابر قیمت فعلی = مشکوک
 
 REPORT_PATH = "advisor_report.md"
 LOG_PATH = "advice_log.csv"
@@ -60,16 +62,33 @@ def ask_number(prompt, allow_zero=True):
         return value
 
 
-def ask_questions():
+def price_looks_wrong(buy_price, market_price):
+    """قیمت خرید خیلی دور از قیمت فعلی است؟ (مثلاً قیمت هر گرم به‌جای هر اونس)"""
+    if not market_price:
+        return False
+    low, high = PRICE_CHECK
+    return not (low * market_price <= buy_price <= high * market_price)
+
+
+def ask_questions(market_price=None):
     print("=" * 62)
     print(" Personal gold/USDT advisor (XAUTUSDT) - no orders are placed")
     print("=" * 62)
-    usdt = ask_number(" 1) How much USDT do you hold? ")
-    xaut = ask_number(" 2) How much gold (XAUT) do you hold? ")
+    usdt = ask_number(" 1) How much USDT (Tether) do you hold? (1 USDT ~ 1 US dollar, e.g. 250) ")
+    xaut = ask_number(" 2) How much gold do you hold, in XAUT, as shown in your Wallex wallet?\n"
+                      "    (1 XAUT = 1 ounce = about 31.1 grams, e.g. 0.05) ")
     buy_price = None
     if xaut > 0:
-        buy_price = ask_number("    At what average price did you buy it (USDT per XAUT)? ",
-                               allow_zero=False)
+        hint = f"; now about {market_price:,.0f}" if market_price else ""
+        while True:
+            buy_price = ask_number(f"    Average buy price, in USDT per 1 XAUT "
+                                   f"(price per ounce, not per gram{hint}): ", allow_zero=False)
+            if not price_looks_wrong(buy_price, market_price):
+                break
+            ok = input(f"    {buy_price:,.2f} is far from today's price ({market_price:,.0f}). "
+                       f"Maybe a per-gram price? Keep it? (y/n): ").strip().lower()
+            if ok in ("y", "yes"):
+                break
     print(" 3) What is your goal?")
     print("    1 = hold long term   2 = more profit   3 = cash out soon")
     while True:
@@ -197,10 +216,14 @@ def algorithm_opinion(answers, facts):
 
 # ---------------------------------------------------------------- خروجی
 
-def pct(x, sign=True):
+def pct(x, sign=True, digits=2):
     if x is None:
         return "n/a"
-    return f"{x * 100:+.2f}%" if sign else f"{x * 100:.2f}%"
+    return f"{x * 100:+.{digits}f}%" if sign else f"{x * 100:.{digits}f}%"
+
+
+def grams(xaut):
+    return xaut * GRAMS_PER_XAUT
 
 
 def print_summary(answers, f, opinion):
@@ -211,8 +234,11 @@ def print_summary(answers, f, opinion):
     note = "" if f["book_live"] else "  (live price failed, using last close)"
     print(f" Sell price now (bid)     : {f['bid']:,.2f} USDT{note}")
     print(f" Buy price now (ask)      : {f['ask']:,.2f} USDT")
-    print(f" Cost to sell now         : {pct(f['sell_cost'], False)} (fee + gap)")
+    print(f" Buy/sell gap             : {pct(f['spread'], False, 3)}")
+    print(f" Cost to sell now         : {pct(f['sell_cost'], False, 3)} (fee + half the gap)")
     if answers["xaut"] > 0:
+        print(f" Gold held                : {answers['xaut']:,.6g} XAUT "
+              f"(about {grams(answers['xaut']):,.2f} grams)")
         print(f" Gold profit/loss if sold : {f['pnl']:+,.2f} USDT ({pct(f['pnl_pct'])})")
         print(f" Break-even sell price    : {f['breakeven_bid']:,.2f} USDT")
     print(f" Total value now          : {f['total_now']:,.2f} USDT "
@@ -243,9 +269,10 @@ def report_text(answers, f, opinion):
     L.append("> این برنامه هیچ خرید و فروشی انجام نمی‌دهد. فقط اطلاعات می‌دهد.\n")
 
     L.append("## جواب‌های شما\n")
-    L.append(f"- تتر: {answers['usdt']:,.2f}")
-    L.append(f"- طلا (XAUT): {answers['xaut']:,.6g}"
-             + (f" — قیمت خرید: {answers['buy_price']:,.2f} تتر" if answers["xaut"] > 0 else ""))
+    L.append(f"- تتر (USDT): {answers['usdt']:,.2f}")
+    L.append(f"- طلا: {answers['xaut']:,.6g} XAUT (حدود {grams(answers['xaut']):,.2f} گرم)"
+             + (f" — قیمت خرید هر ۱ XAUT (هر اونس): {answers['buy_price']:,.2f} تتر"
+                if answers["xaut"] > 0 else ""))
     L.append(f"- هدف: {GOALS[answers['goal']][1]}\n")
 
     L.append("## بخش ۱: واقعیت‌ها (قابل اعتماد)\n")
@@ -253,8 +280,11 @@ def report_text(answers, f, opinion):
         L.append("⚠️ قیمت زنده گرفته نشد؛ آخرین قیمت بسته‌شده روزانه استفاده شد.\n")
     L.append(f"- **قیمتی که الان می‌توانید بفروشید:** {f['bid']:,.2f} تتر")
     L.append(f"- **قیمتی که الان می‌توانید بخرید:** {f['ask']:,.2f} تتر")
-    L.append(f"- **هزینه واقعی فروش همین الان:** {pct(f['sell_cost'], False)} "
-             f"(کارمزد {FEE * 100:.1f}٪ + نصف فاصله قیمت خرید و فروش که {pct(f['spread'], False)} است)")
+    L.append(f"- **هزینه واقعی فروش همین الان:** {pct(f['sell_cost'], False, 3)} "
+             f"(کارمزد {FEE * 100:.1f}٪ + نصف فاصله قیمت خرید و فروش که {pct(f['spread'], False, 3)} است)")
+    if answers["xaut"] > 0 and price_looks_wrong(answers["buy_price"], f["mid"]):
+        L.append("- ⚠️ **قیمت خرید واردشده خیلی با قیمت امروز فرق دارد.** "
+                 "اگر قیمت هر گرم را زده‌اید، عددهای سود و زیان درست نیستند.")
     if answers["xaut"] > 0:
         word = "سود" if f["pnl"] >= 0 else "زیان"
         L.append(f"- **اگر همین الان همه طلا را بفروشید:** {f['gold_cash_now']:,.2f} تتر "
@@ -297,7 +327,8 @@ def write_log(answers, f, opinion):
 
 
 def main():
-    answers = ask_questions()
+    book = fetch_book()
+    answers = ask_questions(None if book is None else (book["bid"] + book["ask"]) / 2)
     print("\n Fetching live data from Wallex (about 30 seconds)...")
     daily = fetch_daily()
     book = fetch_book()
