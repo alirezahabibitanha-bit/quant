@@ -7,7 +7,9 @@ bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
 
 امنیت:
   - کلید ربات (توکن) در کد نیست. در فایل ~/.bale_token روی سرور نگه داشته می‌شود.
-  - فقط یک نفر (صاحب ربات) جواب می‌گیرد. شناسه او در فایل ~/.bale_allowed است.
+  - فقط کسانی جواب می‌گیرند که شناسه‌شان در فایل ~/.bale_allowed است (هر خط یک شناسه).
+    خط اول = صاحب ربات. آدم جدید که پیام بدهد، به صاحب ربات خبر داده می‌شود.
+    فایل با هر پیام دوباره خوانده می‌شود؛ بعد از اضافه کردن شناسه، لازم نیست ربات را دوباره روشن کنید.
     اگر این فایل نباشد، ربات به هر کسی فقط شناسه خودش را می‌گوید و گزارشی نمی‌دهد.
 
 اجرا:
@@ -47,6 +49,24 @@ def read_file(path):
             return fh.read().strip() or None
     except FileNotFoundError:
         return None
+
+
+def read_allowed():
+    """شناسه‌های مجاز، به ترتیب فایل. خط خالی و خطی که با # شروع شود نادیده گرفته می‌شود."""
+    text = read_file(ALLOWED_PATH) or ""
+    ids = []
+    for line in text.splitlines():
+        line = line.split("#")[0].strip()
+        if line:
+            ids.append(line)
+    return ids
+
+
+def who(msg):
+    """نام و نام کاربری فرستنده، برای خبر دادن به صاحب ربات."""
+    u = msg.get("from") or {}
+    name = " ".join(x for x in (u.get("first_name"), u.get("last_name")) if x) or "بی‌نام"
+    return name + (f" (@{u['username']})" if u.get("username") else "")
 
 
 def load_saved():
@@ -265,15 +285,16 @@ def main():
     token = read_file(TOKEN_PATH)
     if not token:
         raise SystemExit(f"Bot token not found. Put it in {TOKEN_PATH} (one line).")
-    allowed = read_file(ALLOWED_PATH)
     bot = Bale(token)
     me = bot.call("getMe")
     print(f" Connected to Bale as @{me.get('username')}")
+    allowed = read_allowed()
     if allowed:
-        print(f" Only chat id {allowed} will get answers.")
+        print(f" Allowed chat ids: {len(allowed)} (owner: {allowed[0]})")
     else:
         print(f" WARNING: {ALLOWED_PATH} not found. The bot will only tell people their chat id.")
     conv = Conversation(bot, Advisor())
+    told = set()        # غریبه‌هایی که یک بار جوابشان داده شده (برای جلوگیری از پیام تکراری)
 
     offset = None
     while True:
@@ -292,14 +313,23 @@ def main():
             chat_id = (msg.get("chat") or {}).get("id")
             if chat_id is None:
                 continue
+            allowed = read_allowed()
             if not allowed:
                 print(f" Message from chat id {chat_id}")
                 bot.send(chat_id, f"شناسه شما: {chat_id}\n"
                                   f"اگر صاحب این ربات هستید، این عدد را در فایل {ALLOWED_PATH} بگذارید "
                                   f"و ربات را دوباره اجرا کنید.")
                 continue
-            if str(chat_id) != allowed:
-                print(f" Ignored message from unknown chat id {chat_id}")
+            if str(chat_id) not in allowed:
+                print(f" Message from unknown chat id {chat_id}")
+                if chat_id not in told:
+                    told.add(chat_id)
+                    bot.send(chat_id, f"این ربات خصوصی است.\nشناسه شما: {chat_id}\n"
+                                      "اگر صاحب ربات شما را می‌شناسد، این عدد را برایش بفرستید.")
+                    bot.send(allowed[0], f"کسی می‌خواهد از ربات استفاده کند:\n{who(msg)}\n"
+                                         f"شناسه: {chat_id}\n"
+                                         f"برای اجازه دادن، این عدد را در یک خط تازه به فایل "
+                                         f"{ALLOWED_PATH} روی سرور اضافه کنید.")
                 continue
             try:
                 conv.handle(chat_id, msg.get("text"))
