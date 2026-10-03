@@ -219,3 +219,8 @@ __marimo__/
 
 # Python compiled files (project rule)
 *.pyc
+
+# Advisor personal outputs (contain holdings; keep off GitHub)
+advisor_report.md
+advice_log.csv
+signals_log.csv
