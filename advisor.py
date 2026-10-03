@@ -28,13 +28,23 @@ DEPTH_URL = "https://api.wallex.ir/v1/depth"
 HEADERS = {"User-Agent": "quant-research/1.0"}
 
 FEE = 0.002              # کارمزد هر طرف در بازار تتری والکس
-HISTORY_DAYS = 400       # برای میانگین ۲۰۰ روزه و نوسان «عادی» یک سال
+HISTORY_DAYS = 430       # برای سیگنال‌ها (میانگین ۲۹۰ روزه، مومنتوم ۳۶۵ روزه در آخر ماه قبل) و نوسان یک سال
 TREND_DAYS = 200         # میانگین ۲۰۰ روزه
 VOL_DAYS = 20            # نوسان «امروز» = نوسان ۲۰ روز اخیر
 VOL_HIGH = 1.5           # بیش از ۱.۵ برابر حالت عادی = پرنوسان
 VOL_CALM = 0.75          # کمتر از ۰.۷۵ برابر حالت عادی = آرام
 GRAMS_PER_XAUT = 31.1035 # هر ۱ XAUT = ۱ اونس طلا ≈ ۳۱.۱ گرم
 PRICE_CHECK = (0.5, 2.0) # قیمت خرید کمتر از نصف یا بیشتر از دو برابر قیمت فعلی = مشکوک
+
+# سیگنال سه روش تست‌شده در backtest_slow.py. آن تست روی روزهای کاری بازار جهانی بود؛
+# XAUTUSDT هر روز هفته معامله می‌شود، پس دوره‌ها به روز تقویمی تبدیل شده‌اند.
+SIG_MA_LONG = 290        # ≈ ۲۰۰ روز کاری
+SIG_MA_SHORT = 70        # ≈ ۵۰ روز کاری
+SIG_MOM_DAYS = 365       # ۱۲ ماه
+SIGNAL_NAMES = {"MA200_MONTHLY": ("میانگین ۲۰۰ روزه (ماهانه)", "MA200", "MA"),
+                "MOM12_MONTHLY": ("مومنتوم ۱۲ ماهه (ماهانه)", "MOM12", "MOM"),
+                "CROSS_50_200": ("تقاطع ۵۰/۲۰۰ (روزانه)", "50/200", "X")}
+BACKTEST_RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "slow_methods_results.csv")
 
 REPORT_PATH = "advisor_report.md"
 LOG_PATH = "advice_log.csv"
@@ -204,7 +214,40 @@ def compute_facts(answers, daily, book):
     f["year_change"] = float(year.iloc[-1] / year.iloc[0] - 1)
     f["year_days"] = len(year)
     f["last_day"] = daily.index[-1]
+    f["signals"] = trend_signals(daily)
     return f
+
+
+def trend_signals(daily):
+    """True = در طلا باشید، False = در تتر باشید، None = داده کافی نیست.
+    روش‌های ماهانه با قیمت آخرین روز ماه قبل تصمیم می‌گیرند (مثل تست)، تقاطع با آخرین روز بسته‌شده."""
+    def above_ma(x, n):
+        return None if len(x) < n else bool(x.iloc[-1] > x.iloc[-n:].mean())
+
+    out = {}
+    month_start = pd.Timestamp.now(tz="Asia/Tehran").normalize().replace(day=1)
+    upto = daily[daily.index < month_start]
+    out["MA200_MONTHLY"] = above_ma(upto, SIG_MA_LONG) if len(upto) else None
+    out["MOM12_MONTHLY"] = None
+    if len(upto):
+        past = upto[upto.index <= upto.index[-1] - pd.Timedelta(days=SIG_MOM_DAYS)]
+        if len(past):
+            out["MOM12_MONTHLY"] = bool(upto.iloc[-1] > past.iloc[-1])
+    if len(daily) >= SIG_MA_LONG:
+        out["CROSS_50_200"] = bool(daily.iloc[-SIG_MA_SHORT:].mean() > daily.iloc[-SIG_MA_LONG:].mean())
+    else:
+        out["CROSS_50_200"] = None
+    return out
+
+
+def track_record():
+    """کارنامه ۲۰ ساله هر روش از نتیجه backtest_slow.py (منبع GLD، کل دوره)."""
+    try:
+        r = pd.read_csv(BACKTEST_RESULTS)
+    except (FileNotFoundError, ValueError):
+        return {}
+    r = r[(r.source == "GLD") & (r.period == "FULL")]
+    return {row.method: row for row in r.itertuples()}
 
 
 # ---------------------------------------------------------------- نظر الگوریتم
@@ -237,12 +280,31 @@ def algorithm_opinion(answers, f):
                          "درباره زمان فروش پیشنهادی نمی‌دهیم.")
         else:
             lines.append("برای هدف «نقد کردن سریع»: طلایی برای فروش ندارید؛ دارایی شما همین الان تتر است.")
-    if f["trend"] in ("UP", "DOWN"):
-        where = "زیر" if f["trend"] == "DOWN" else "بالای"
-        lines.append(f"فقط برای اطلاع: قیمت {where} میانگین ۲۰۰ روزه است. "
-                     "در تست، عمل کردن به این نشانه سود را بیشتر نکرد؛ "
-                     "فقط در دوره‌های ریزشی افت را کمتر کرد.")
+    lines.extend(signal_lines(f["signals"]))
+    code += "|" + "|".join(f"{SIGNAL_NAMES[m][2]}:{'NA' if v is None else ('GOLD' if v else 'USDT')}"
+                           for m, v in f["signals"].items())
     return code, lines
+
+
+def signal_lines(signals):
+    rec = track_record()
+    L = ["سیگنال سه روش تست‌شده برای امروز (فقط برای اطلاع؛ در تست هیچ‌کدام سود را از نگه داشتن "
+         "بیشتر نکرد، ولی در دوره‌های ریزشی افت را کمتر کرد):"]
+    for m, v in signals.items():
+        state = "داده کافی نیست" if v is None else ("می‌گوید در طلا باشید" if v else "می‌گوید در تتر باشید")
+        line = f"  - {SIGNAL_NAMES[m][0]}: {state}"
+        if m in rec:
+            line += (f" — کارنامه ۲۰ ساله: سود سالانه {rec[m].cagr * 100:+.1f}٪، "
+                     f"بدترین افت {rec[m].max_dd * 100:.0f}٪، حدود {rec[m].trades_per_year:.1f} جابه‌جایی در سال")
+        L.append(line)
+    if "HOLD" in rec:
+        h = rec["HOLD"]
+        L.append(f"  - برای مقایسه، فقط نگه داشتن: سود سالانه {h.cagr * 100:+.1f}٪، "
+                 f"بدترین افت {h.max_dd * 100:.0f}٪")
+    known = [v for v in signals.values() if v is not None]
+    if known:
+        L.append(f"  - جمع: {sum(known)} از {len(known)} روش می‌گویند در طلا باشید.")
+    return L
 
 
 # ---------------------------------------------------------------- خروجی
@@ -281,7 +343,10 @@ def print_summary(answers, f, opinion):
     print(f" From 1-year high         : {pct(f['from_year_high'])}")
     print("-" * 62)
     print(" ALGORITHM OPINION (EXPERIMENTAL):")
-    print(f"   {OPINION_EN[opinion[0]]}")
+    print(f"   {OPINION_EN[opinion[0].split('|')[0]]}")
+    sig = "  ".join(f"{SIGNAL_NAMES[m][1]}={'n/a' if v is None else ('GOLD' if v else 'USDT')}"
+                    for m, v in f["signals"].items())
+    print(f"   Signals (tested; did not beat holding): {sig}")
     print("-" * 62)
     print(f" Full Persian report: {REPORT_PATH}")
     print(f" Logged to          : {LOG_PATH}")
@@ -337,7 +402,7 @@ def report_text(answers, f, opinion):
     L.append("## بخش ۲: نظر الگوریتم (آزمایشی)\n")
     L.append("> این بخش نظر است، نه واقعیت. بر پایه تست ۲۰ ساله قیمت جهانی طلا "
              "(گزارش کامل: slow_methods_report.md). گذشته تضمین آینده نیست.\n")
-    L.extend(f"- {line}" for line in opinion[1])
+    L.extend(line if line.startswith("  ") else f"- {line}" for line in opinion[1])
     L.append("")
     return "\n".join(L)
 
