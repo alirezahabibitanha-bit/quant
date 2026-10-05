@@ -20,7 +20,8 @@ global_gold.py - قیمت طلای بازار جهانی به دلار (XAU/USD)
     برای کندل ۲ دقیقه‌ای کافی است، ولی قیمت تا حدود ۱ دقیقه عقب است). live_source() می‌گوید الان کدام است.
 
 راه رسیدن از ایران:
-  اگر ~/.gemini_base_url باشد (تونل سرور ایران به سرور خارج، relay/README.md)، اول از همان تونل می‌رود
+  اگر ~/.proxy_url باشد (پروکسی Xray روی خود سرور ایران، relay/xray_setup.sh)، اول از آن می‌رود.
+  بعد اگر ~/.gemini_base_url باشد (تونل سرور ایران به سرور خارج، relay/README.md)، اول از همان تونل می‌رود
   (‎/yahoo/، ‎/swissquote/ و ‎/goldapi/ روی nginx سرور خارج)؛ اگر نشد، مستقیم امتحان می‌کند.
 
 کارمزد هر طرف: از ~/.global_fee (درصد، مثلاً 0.1). اگر نباشد صفر.
@@ -34,6 +35,8 @@ import time
 
 import pandas as pd
 import requests
+
+import net_proxy
 
 YAHOO = "https://query1.finance.yahoo.com"
 GOLDAPI = "https://api.gold-api.com"
@@ -66,22 +69,35 @@ def _read(path):
 
 
 def _get_json(direct_url, relay_prefix, params=None, timeout=20):
-    """اول از تونل (اگر هست)، بعد مستقیم. خطای آخر را بالا می‌دهد."""
-    urls = []
+    """اول از پروکسی (اگر هست)، بعد از تونل (اگر هست)، بعد مستقیم. خطای آخر را بالا می‌دهد."""
+    tries = []
+    px = net_proxy.proxies()
+    if px:
+        tries.append((direct_url, px))
     base = _read(BASE_URL_PATH)
     if base:
         host = next(h for h in (YAHOO, SWISSQUOTE, GOLDAPI) if direct_url.startswith(h))
-        urls.append(base.rstrip("/") + "/" + relay_prefix + direct_url[len(host):])
-    urls.append(direct_url)
+        tries.append((base.rstrip("/") + "/" + relay_prefix + direct_url[len(host):], None))
+    tries.append((direct_url, None))
     err = None
-    for url in urls:
+    for url, proxies in tries:
         try:
-            r = requests.get(url, params=params, headers=HEADERS, timeout=timeout)
+            r = requests.get(url, params=params, headers=HEADERS, timeout=timeout, proxies=proxies)
             r.raise_for_status()
             return r.json()
         except (requests.RequestException, ValueError) as e:
             err = e
     raise RuntimeError(f"{direct_url.split('?')[0]}: {err}")
+
+
+def route():
+    """به چه ترتیبی امتحان می‌شود (برای چاپ در ترمینال)."""
+    steps = []
+    if net_proxy.proxy_url():
+        steps.append("proxy " + net_proxy.proxy_url())
+    if _read(BASE_URL_PATH):
+        steps.append("tunnel " + _read(BASE_URL_PATH))
+    return " then ".join(steps + ["direct"])
 
 
 def fee():
@@ -289,7 +305,7 @@ def fetch_minutes(hours=4):
 
 def main():
     print(" Global gold price (no Wallex, no USDT)")
-    print(f" Route: {'tunnel ' + _read(BASE_URL_PATH) + ' then direct' if _read(BASE_URL_PATH) else 'direct'}")
+    print(f" Route: {route()}")
     q = swissquote()
     print(f" Swissquote       : bid {q['bid']:,.2f} / ask {q['ask']:,.2f} ({q['age']:.0f} s old)" if q else
           " Swissquote       : FAILED (will use gold-api)")

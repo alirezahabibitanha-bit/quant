@@ -64,6 +64,40 @@ bash ~/quant/relay/iran_setup.sh connect IP
 
 اگر آخرش نوشت `== Gemini works through the relay.` تمام است ✅
 
+## راه دوم (پیشنهادی اگر تونل SSH قطع می‌شود): پروکسی Xray با لینک vless
+اگر تونل SSH از ایران timeout می‌شود (فیلترینگ SSH را کند یا قطع می‌کند)، به جای آن از یک لینک `vless://`
+(مثلاً از یک سرویس VPN) استفاده کنید. سرور خارج خودتان لازم نیست.
+
+```
+ربات (سرور ایران) ──► 127.0.0.1:10809 (Xray، فقط داخل سرور) ══ VLESS+Reality ══► سرور VPN ──► جیمینای / قیمت طلا
+بله، والکس، SSH شما ──► مستقیم (دست‌نخورده)
+```
+
+- فقط جیمینای و قیمت جهانی طلا از پروکسی رد می‌شوند؛ بله و بقیه سرور مستقیم می‌مانند.
+- **لینک vless مثل رمز است:** فقط در `~/.vless_link` روی سرور؛ هرگز در GitHub یا چت.
+- کشور سرور لینک باید برای جیمینای باز باشد (آلمان، هلند و ... بله؛ هنگ‌کنگ، روسیه، چین نه).
+
+قدم‌ها روی سرور ایران:
+```bash
+~/quant/update.sh                              # گرفتن کد تازه
+nano ~/.vless_link                             # لینک vless:// را paste کنید، Ctrl+O، Enter، Ctrl+X
+chmod 600 ~/.vless_link
+bash ~/quant/relay/xray_setup.sh connect       # نصب Xray از GitHub، ساختن تنظیمات، روشن کردن، تست
+systemctl restart bale-bot                     # ربات از پروکسی استفاده کند
+```
+باید ببینید `Internet through the proxy works` و `Gemini works through the proxy`.
+
+| کار | دستور |
+|---|---|
+| پروکسی روشن است؟ | `systemctl status xray` |
+| چرا کار نمی‌کند؟ | `journalctl -u xray -n 30` |
+| تست دوباره | `bash ~/quant/relay/xray_setup.sh test` |
+| لینک عوض شد | لینک تازه در `~/.vless_link`، بعد `bash ~/quant/relay/xray_setup.sh connect` |
+| خاموش کردن | `bash ~/quant/relay/xray_setup.sh off` |
+
+اگر هم `~/.proxy_url` باشد و هم تونل SSH، برنامه اول پروکسی را امتحان می‌کند (قیمت طلا: بعد تونل، بعد مستقیم).
+اگر تونل SSH دیگر لازم نیست: `systemctl disable --now gemini-tunnel`.
+
 ## قیمت جهانی طلا از همین تونل (ربات طلا و دلار)
 ربات بله حالا قیمت طلا را از بازار جهانی (یاهو و gold-api) می‌گیرد، نه والکس. ممکن است این سایت‌ها از ایران باز نشوند؛
 برای همین از همین تونل هم رد می‌شوند. اگر تونل را **قبلاً** ساخته‌اید، فقط یک بار این را روی **سرور خارج** بزنید:
