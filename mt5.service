@@ -24,6 +24,8 @@ Environment=WINEPREFIX=/home/trader/.mt5
 Environment=WINEDEBUG=-all
 ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x800x24" /usr/bin/wine "/home/trader/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"
 Restart=always
+# اگر رم پر شد: لینوکس اول متاتریدر را می‌بندد؛ بعد از ۳۰ ثانیه خودش دوباره روشن می‌شود
+OOMScoreAdjust=500
 RestartSec=30
 
 [Install]

@@ -30,6 +30,8 @@ ExecStart=/usr/bin/python3 /root/quant/bale_bot.py --telegram --metatrader
 Environment=HOME=/root
 Environment=PYTHONUNBUFFERED=1
 Restart=always
+# اگر رم پر شد: لینوکس ربات را آخر از همه می‌بندد
+OOMScoreAdjust=-500
 RestartSec=10
 
 [Install]

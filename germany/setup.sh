@@ -7,7 +7,7 @@
 #
 # کارها به ترتیب:
 #   1. نصب کتابخانه‌های پایتون از apt (همان‌هایی که سرور ایران دارد)
-#   2. ساختن Swap (اگر نباشد)
+#   2. Swap: با رم کمتر از ۳٫۵ گیگ، ۴ گیگ؛ وگرنه ۲ گیگ (اگر کمتر باشد)
 #   3. گرفتن کد از GitHub در /root/quant (اگر مخزن خصوصی باشد، یک «کلید فقط‌خواندنی» می‌سازد)
 #   4. نصب Wine (برای اجرای متاتریدر ویندوزی روی لینوکس) و یک میز کار سبک (XFCE) با «Remote Desktop»
 #      - کاربر جدا به اسم trader برای متاتریدر (رمزش را یک بار می‌پرسد)
@@ -31,6 +31,10 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "!! Run this as root."
     exit 1
 fi
+if [ "$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)" -lt 1800 ]; then
+    echo "!! Less than 2 GB RAM. MetaTrader with Wine needs at least 2 GB."
+    exit 1
+fi
 if [ "$(dpkg --print-architecture)" != "amd64" ]; then
     echo "!! This server is not x86_64 (amd64). MetaTrader/Wine needs an x86_64 server, not ARM."
     exit 1
@@ -43,16 +47,25 @@ apt-get update -q
 apt-get install -y -q python3 python3-pandas python3-requests python3-numpy git ufw curl wget screen openssl
 
 echo "== 2/8 Swap..."
-if swapon --show | grep -q .; then
-    echo "   swap already on."
+# با ۲ گیگ رم (متاتریدر + Wine + ربات) جای اضافه کم است؛ Swap بزرگ‌تر جلوی قفل شدن سرور را می‌گیرد.
+RAM_MB=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)
+SWAP_MB=$(awk '/^SwapTotal:/{print int($2/1024)}' /proc/meminfo)
+WANT_MB=$([ "$RAM_MB" -lt 3500 ] && echo 4096 || echo 2048)
+if [ "$SWAP_MB" -ge $((WANT_MB * 9 / 10)) ]; then
+    echo "   swap already ${SWAP_MB} MB (RAM ${RAM_MB} MB)."
+elif [ -f /swapfile ]; then
+    echo "   WARNING: /swapfile exists but total swap is only ${SWAP_MB} MB; wanted ${WANT_MB} MB. Left as is."
 else
-    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+    fallocate -l "${WANT_MB}M" /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count="$WANT_MB" status=none
     chmod 600 /swapfile
     mkswap -q /swapfile
     swapon /swapfile
     grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    echo "   2 GB swap created."
+    echo "   ${WANT_MB} MB swap created (RAM ${RAM_MB} MB)."
 fi
+# فقط وقتی رم واقعاً پر است از Swap استفاده شود (کندی کمتر)
+echo 'vm.swappiness=10' > /etc/sysctl.d/90-quant-swap.conf
+sysctl -q -p /etc/sysctl.d/90-quant-swap.conf || true
 
 echo "== 3/8 Getting the code from GitHub..."
 if [ -d "$DIR/.git" ]; then
