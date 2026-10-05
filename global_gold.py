@@ -47,7 +47,9 @@ BARS_PATH = "global_bars.csv"   # نسبی: در حالت --global، پوشه gl
 KEEP_SECONDS = 3 * 86400
 MIN_BARS = 40                # همان حداقل advisor.fetch_minutes (کندل ۲ دقیقه‌ای)
 _spot = {"at": 0.0, "price": None}
-_quote = {"at": 0.0, "q": None}
+_quote = {"at": 0.0, "q": None, "failed_at": 0.0, "told_at": 0.0}
+FAIL_PAUSE = 60              # بعد از خطای Swissquote، این‌قدر ثانیه سراغش نرو (گزارش‌ها منتظر نمانند)
+FAIL_LOG_EVERY = 600         # خطای Swissquote حداکثر هر ۱۰ دقیقه یک بار در لاگ
 _lock = threading.Lock()
 
 
@@ -92,13 +94,21 @@ def swissquote():
     with _lock:
         if time.time() - _quote["at"] < 5 and _quote["q"]:
             return _quote["q"]
+        if time.time() - _quote["failed_at"] < FAIL_PAUSE:
+            return None
     try:
         d = _get_json(f"{SWISSQUOTE}/public-quotes/bboquotes/instrument/XAU/USD", "swissquote", timeout=10)
         prices = d[0]["spreadProfilePrices"]
         best = min(prices, key=lambda x: float(x["ask"]) - float(x["bid"]))
         q = {"bid": float(best["bid"]), "ask": float(best["ask"]), "age": time.time() - d[0]["ts"] / 1000}
     except Exception as e:
-        print(f" Swissquote price failed: {str(e)[:150]}")
+        with _lock:
+            _quote["failed_at"] = time.time()
+            tell = time.time() - _quote["told_at"] > FAIL_LOG_EVERY
+            if tell:
+                _quote["told_at"] = time.time()
+        if tell:
+            print(f" Swissquote price failed (next report in 10 min): {str(e)[:300]}")
         return None
     if not (100 < q["bid"] <= q["ask"] < 100000 and q["ask"] / q["bid"] < 1.01):
         return None
