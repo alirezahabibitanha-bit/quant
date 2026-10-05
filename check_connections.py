@@ -83,7 +83,10 @@ def check_global():
         return show("Gold USD", False, f"daily OK ({len(daily)} days) but no live spot price; "
                                        "reports will use yesterday's close.")
     via = "tunnel" if global_gold._read(global_gold.BASE_URL_PATH) else "direct"
-    return show("Gold USD", True, f"spot {spot:,.2f} USD, {len(daily)} daily prices ({via})")
+    q = global_gold.swissquote()
+    live = (f"Swissquote bid {q['bid']:,.2f} / ask {q['ask']:,.2f}" if q else
+            "Swissquote FAILED (using gold-api; no 2-minute forecast)")
+    return show("Gold USD", q is not None, f"{live}, {len(daily)} daily prices ({via})")
 
 
 def check_gemini(full):
