@@ -28,7 +28,9 @@ DEPTH_URL = "https://api.wallex.ir/v1/depth"
 HEADERS = {"User-Agent": "quant-research/1.0"}
 
 FEE = 0.002              # کارمزد هر طرف در بازار تتری والکس
-MARKET = {"name": "والکس", "unit": "تتر", "digits": 0}   # در حالت متاتریدر عوض می‌شود (use_metatrader)
+# cash = دارایی غیرطلای کاربر؛ gold = واحد طلا؛ minutes = داده ۱ دقیقه‌ای زنده دارد (پیش‌بینی ۲ دقیقه)
+MARKET = {"name": "والکس", "unit": "تتر", "digits": 0, "cash": "تتر", "cash_code": "USDT", "gold": "XAUT",
+          "minutes": True}   # در حالت متاتریدر و بازار جهانی عوض می‌شود (use_metatrader، use_global)
 HISTORY_DAYS = 430       # برای سیگنال‌ها (میانگین ۲۹۰ روزه، مومنتوم ۳۶۵ روزه در آخر ماه قبل) و نوسان یک سال
 TREND_DAYS = 200         # میانگین ۲۰۰ روزه
 VOL_DAYS = 20            # نوسان «امروز» = نوسان ۲۰ روز اخیر
@@ -83,16 +85,22 @@ def price_looks_wrong(buy_price, market_price):
 
 def ask_questions(market_price=None):
     print("=" * 62)
-    print(" Personal gold/USDT advisor (XAUTUSDT) - no orders are placed")
+    c = MARKET["cash_code"]
+    print(f" Personal gold/{c} advisor ({SYMBOL}) - no orders are placed")
     print("=" * 62)
-    usdt = ask_number(" 1) How much USDT (Tether) do you hold? (1 USDT ~ 1 US dollar, e.g. 250) ")
-    xaut = ask_number(" 2) How much gold do you hold, in XAUT, as shown in your Wallex wallet?\n"
-                      "    (1 XAUT = 1 ounce = about 31.1 grams, e.g. 0.05) ")
+    if c == "USD":
+        usdt = ask_number(" 1) How many US dollars (cash, not gold) do you hold? (e.g. 250) ")
+        xaut = ask_number(" 2) How much gold do you hold, in troy ounces?\n"
+                          "    (1 ounce = about 31.1 grams, e.g. 0.05) ")
+    else:
+        usdt = ask_number(" 1) How much USDT (Tether) do you hold? (1 USDT ~ 1 US dollar, e.g. 250) ")
+        xaut = ask_number(" 2) How much gold do you hold, in XAUT, as shown in your Wallex wallet?\n"
+                          "    (1 XAUT = 1 ounce = about 31.1 grams, e.g. 0.05) ")
     buy_price = None
     if xaut > 0:
         hint = f"; now about {market_price:,.0f}" if market_price else ""
         while True:
-            buy_price = ask_number(f"    Average buy price, in USDT per 1 XAUT "
+            buy_price = ask_number(f"    Average buy price, in {c} per ounce "
                                    f"(price per ounce, not per gram{hint}): ", allow_zero=False)
             if not price_looks_wrong(buy_price, market_price):
                 break
@@ -169,7 +177,29 @@ def use_metatrader():
             FEE = float(fh.read().strip()) / 100
     except (FileNotFoundError, ValueError):
         FEE = 0.0
-    MARKET = {"name": "متاتریدر", "unit": "دلار", "digits": 2}   # تکان ۲ دقیقه حدود ۱ دلار است؛ سنت لازم است
+    MARKET = {"name": "متاتریدر", "unit": "دلار", "digits": 2,   # تکان ۲ دقیقه حدود ۱ دلار است؛ سنت لازم است
+              "cash": "تتر", "cash_code": "USDT", "gold": "XAUT", "minutes": True}
+
+
+def use_global():
+    """منبع همه قیمت‌ها را از والکس به بازار جهانی (global_gold.py: یاهو + gold-api) عوض می‌کند.
+    دارایی کاربر دلار و طلا (اونس) است؛ تتر و والکس هیچ جا نمی‌آید. داده دقیقه‌ای زنده ندارد."""
+    global fetch_daily, fetch_book, fetch_minutes, FEE, MARKET, SYMBOL
+    import global_gold
+    fetch_daily, fetch_book, fetch_minutes = global_gold.fetch_daily, global_gold.fetch_book, global_gold.fetch_minutes
+    FEE = global_gold.fee()
+    SYMBOL = "XAUUSD"
+    MARKET = {"name": "بازار جهانی", "unit": "دلار", "digits": 2,
+              "cash": "دلار", "cash_code": "USD", "gold": "اونس", "minutes": False}
+
+
+def cash():
+    return MARKET["cash"]
+
+
+def per_gold():
+    """«هر ۱ XAUT (هر اونس)» یا فقط «هر اونس»"""
+    return "هر اونس" if MARKET["gold"] == "اونس" else f"هر ۱ {MARKET['gold']} (هر اونس)"
 
 
 # ---------------------------------------------------------------- واقعیت‌ها
@@ -307,12 +337,12 @@ def algorithm_opinion(answers, f):
         if answers["xaut"] > 0:
             cost_usdt = answers["xaut"] * f["mid"] * f["sell_cost"]
             lines.append(f"برای هدف «نقد کردن سریع»: هزینه واقعی فروش همه طلا همین الان "
-                         f"{pct(f['sell_cost'], False, 3)} است، یعنی حدود {cost_usdt:,.2f} تتر. "
+                         f"{pct(f['sell_cost'], False, 3)} است، یعنی حدود {cost_usdt:,.2f} {cash()}. "
                          "درباره زمان فروش پیشنهادی نمی‌دهیم.")
         else:
-            lines.append("برای هدف «نقد کردن سریع»: طلایی برای فروش ندارید؛ دارایی شما همین الان تتر است.")
+            lines.append(f"برای هدف «نقد کردن سریع»: طلایی برای فروش ندارید؛ دارایی شما همین الان {cash()} است.")
     lines.extend(signal_lines(f["signals"]))
-    code += "|" + "|".join(f"{SIGNAL_NAMES[m][2]}:{'NA' if v is None else ('GOLD' if v else 'USDT')}"
+    code += "|" + "|".join(f"{SIGNAL_NAMES[m][2]}:{'NA' if v is None else ('GOLD' if v else MARKET['cash_code'])}"
                            for m, v in f["signals"].items())
     return code, lines
 
@@ -322,7 +352,7 @@ def signal_lines(signals):
     L = ["سیگنال سه روش تست‌شده برای امروز (فقط برای اطلاع؛ در تست هیچ‌کدام سود را از نگه داشتن "
          "بیشتر نکرد، ولی در دوره‌های ریزشی افت را کمتر کرد):"]
     for m, v in signals.items():
-        state = "داده کافی نیست" if v is None else ("می‌گوید در طلا باشید" if v else "می‌گوید در تتر باشید")
+        state = "داده کافی نیست" if v is None else ("می‌گوید در طلا باشید" if v else f"می‌گوید در {cash()} باشید")
         line = f"  - {SIGNAL_NAMES[m][0]}: {state}"
         if m in rec:
             line += (f" — کارنامه ۲۰ ساله: سود سالانه {rec[m].cagr * 100:+.1f}٪، "
@@ -356,16 +386,17 @@ def print_summary(answers, f, opinion):
     print(f" FACTS  ({SYMBOL}, {pd.Timestamp.now(tz='Asia/Tehran'):%Y-%m-%d %H:%M} Tehran)")
     print("=" * 62)
     note = "" if f["book_live"] else "  (live price failed, using last close)"
-    print(f" Sell price now (bid)     : {f['bid']:,.2f} USDT{note}")
-    print(f" Buy price now (ask)      : {f['ask']:,.2f} USDT")
+    c = MARKET["cash_code"]
+    print(f" Sell price now (bid)     : {f['bid']:,.2f} {c}{note}")
+    print(f" Buy price now (ask)      : {f['ask']:,.2f} {c}")
     print(f" Buy/sell gap             : {pct(f['spread'], False, 3)}")
     print(f" Cost to sell now         : {pct(f['sell_cost'], False, 3)} (fee + half the gap)")
     if answers["xaut"] > 0:
-        print(f" Gold held                : {answers['xaut']:,.6g} XAUT "
+        print(f" Gold held                : {answers['xaut']:,.6g} {'oz' if c == 'USD' else 'XAUT'} "
               f"(about {grams(answers['xaut']):,.2f} grams)")
-        print(f" Gold profit/loss if sold : {f['pnl']:+,.2f} USDT ({pct(f['pnl_pct'])})")
-        print(f" Break-even sell price    : {f['breakeven_bid']:,.2f} USDT")
-    print(f" Total value now          : {f['total_now']:,.2f} USDT "
+        print(f" Gold profit/loss if sold : {f['pnl']:+,.2f} {c} ({pct(f['pnl_pct'])})")
+        print(f" Break-even sell price    : {f['breakeven_bid']:,.2f} {c}")
+    print(f" Total value now          : {f['total_now']:,.2f} {c} "
           f"(gold share {f['gold_share'] * 100:.0f}%)")
     print(f" Volatility vs normal     : {f['vol_state']}"
           + (f" ({f['vol_ratio']:.2f}x)" if f["vol_ratio"] is not None else ""))
@@ -375,7 +406,7 @@ def print_summary(answers, f, opinion):
     print("-" * 62)
     print(" ALGORITHM OPINION (EXPERIMENTAL):")
     print(f"   {OPINION_EN[opinion[0].split('|')[0]]}")
-    sig = "  ".join(f"{SIGNAL_NAMES[m][1]}={'n/a' if v is None else ('GOLD' if v else 'USDT')}"
+    sig = "  ".join(f"{SIGNAL_NAMES[m][1]}={'n/a' if v is None else ('GOLD' if v else c)}"
                     for m, v in f["signals"].items())
     print(f"   Signals (tested; did not beat holding): {sig}")
     print("-" * 62)
@@ -393,21 +424,21 @@ def report_text(answers, f, opinion):
                 "DOWN": "زیر میانگین ۲۰۰ روزه (روند کلی رو به پایین)",
                 "UNKNOWN": "داده کافی برای میانگین ۲۰۰ روزه نیست"}[f["trend"]]
     L = []
-    L.append(f"# گزارش مشاور طلا و تتر — {now:%Y-%m-%d %H:%M} (تهران)\n")
+    L.append(f"# گزارش مشاور طلا و {cash()} — {now:%Y-%m-%d %H:%M} (تهران)\n")
     L.append("> این برنامه هیچ خرید و فروشی انجام نمی‌دهد. فقط اطلاعات می‌دهد.\n")
 
     L.append("## جواب‌های شما\n")
-    L.append(f"- تتر (USDT): {answers['usdt']:,.2f}")
-    L.append(f"- طلا: {answers['xaut']:,.6g} XAUT (حدود {grams(answers['xaut']):,.2f} گرم)"
-             + (f" — قیمت خرید هر ۱ XAUT (هر اونس): {answers['buy_price']:,.2f} تتر"
+    L.append(f"- {cash()} ({MARKET['cash_code']}): {answers['usdt']:,.2f}")
+    L.append(f"- طلا: {answers['xaut']:,.6g} {MARKET['gold']} (حدود {grams(answers['xaut']):,.2f} گرم)"
+             + (f" — قیمت خرید {per_gold()}: {answers['buy_price']:,.2f} {cash()}"
                 if answers["xaut"] > 0 else ""))
     L.append(f"- هدف: {GOALS[answers['goal']][1]}\n")
 
     L.append("## بخش ۱: واقعیت‌ها (قابل اعتماد)\n")
     if not f["book_live"]:
         L.append("⚠️ قیمت زنده گرفته نشد؛ آخرین قیمت بسته‌شده روزانه استفاده شد.\n")
-    L.append(f"- **قیمتی که الان می‌توانید بفروشید:** {f['bid']:,.2f} تتر")
-    L.append(f"- **قیمتی که الان می‌توانید بخرید:** {f['ask']:,.2f} تتر")
+    L.append(f"- **قیمتی که الان می‌توانید بفروشید:** {f['bid']:,.2f} {cash()}")
+    L.append(f"- **قیمتی که الان می‌توانید بخرید:** {f['ask']:,.2f} {cash()}")
     L.append(f"- **هزینه واقعی فروش همین الان:** {pct(f['sell_cost'], False, 3)} "
              f"(کارمزد {FEE * 100:.1f}٪ + نصف فاصله قیمت خرید و فروش که {pct(f['spread'], False, 3)} است)")
     if answers["xaut"] > 0 and price_looks_wrong(answers["buy_price"], f["mid"]):
@@ -415,12 +446,12 @@ def report_text(answers, f, opinion):
                  "اگر قیمت هر گرم را زده‌اید، عددهای سود و زیان درست نیستند.")
     if answers["xaut"] > 0:
         word = "سود" if f["pnl"] >= 0 else "زیان"
-        L.append(f"- **اگر همین الان همه طلا را بفروشید:** {f['gold_cash_now']:,.2f} تتر "
-                 f"می‌گیرید. شما {f['gold_paid']:,.2f} تتر پرداخت کرده بودید، پس "
-                 f"**{word} {abs(f['pnl']):,.2f} تتر ({pct(f['pnl_pct'])})**.")
-        L.append(f"- **قیمت سر به سر:** اگر قیمت فروش به {f['breakeven_bid']:,.2f} تتر برسد، "
+        L.append(f"- **اگر همین الان همه طلا را بفروشید:** {f['gold_cash_now']:,.2f} {cash()} "
+                 f"می‌گیرید. شما {f['gold_paid']:,.2f} {cash()} پرداخت کرده بودید، پس "
+                 f"**{word} {abs(f['pnl']):,.2f} {cash()} ({pct(f['pnl_pct'])})**.")
+        L.append(f"- **قیمت سر به سر:** اگر قیمت فروش به {f['breakeven_bid']:,.2f} {cash()} برسد، "
                  f"بعد از کارمزد نه سود کرده‌اید نه ضرر.")
-    L.append(f"- **کل دارایی الان:** {f['total_now']:,.2f} تتر "
+    L.append(f"- **کل دارایی الان:** {f['total_now']:,.2f} {cash()} "
              f"({f['gold_share'] * 100:.0f}٪ آن طلاست)")
     L.append(f"- **نوسان:** {vol_fa}"
              + (f" — نوسان روزانه ۲۰ روز اخیر {pct(f['vol_now'], False)} "
@@ -478,25 +509,28 @@ def short_text(answers, f, opinion):
         L += ["⚠️ قیمت لحظه‌ای گرفته نشد؛ قیمت دیروز حساب شد.", ""]
 
     if xaut > 0:
-        L.append(f"دارایی شما الان حدود {fa(f['total_now'])} تتر می‌ارزد؛ "
+        L.append(f"دارایی شما الان حدود {fa(f['total_now'])} {cash()} می‌ارزد؛ "
                  f"{fa(f['gold_share'] * 100)}٪ آن طلاست.")
         if f["pnl"] >= 0:
-            L.append(f"اگر همین الان طلا را بفروشید، {fa(f['pnl'])} تتر سود می‌کنید "
+            L.append(f"اگر همین الان طلا را بفروشید، {fa(f['pnl'])} {cash()} سود می‌کنید "
                      f"({fa(f['pnl_pct'] * 100, 1)}٪).")
-            L.append(f"تا وقتی قیمت بالای {fa(f['breakeven_bid'])} تتر باشد، فروختن ضرر ندارد.")
+            L.append(f"تا وقتی قیمت بالای {fa(f['breakeven_bid'])} {cash()} باشد، فروختن ضرر ندارد.")
         else:
-            L.append(f"اگر همین الان طلا را بفروشید، {fa(f['pnl'])} تتر ضرر می‌کنید "
+            L.append(f"اگر همین الان طلا را بفروشید، {fa(f['pnl'])} {cash()} ضرر می‌کنید "
                      f"({fa(f['pnl_pct'] * 100, 1)}٪).")
-            L.append(f"برای اینکه بی‌ضرر بفروشید، قیمت باید به {fa(f['breakeven_bid'])} تتر برسد.")
-        L.append(f"کارمزد فروش همه طلا الان حدود {fa(xaut * f['mid'] * f['sell_cost'])} تتر است.")
+            L.append(f"برای اینکه بی‌ضرر بفروشید، قیمت باید به {fa(f['breakeven_bid'])} {cash()} برسد.")
+        if f["sell_cost"] > 0:
+            L.append(f"کارمزد فروش همه طلا الان حدود {fa(xaut * f['mid'] * f['sell_cost'])} {cash()} است.")
         if price_looks_wrong(answers["buy_price"], f["mid"]):
             L.append("⚠️ قیمت خریدی که دادید خیلی با قیمت امروز فرق دارد؛ شاید قیمت هر گرم بوده.")
     else:
-        L.append(f"دارایی شما {fa(f['total_now'])} تتر است و طلا ندارید.")
+        L.append(f"دارایی شما {fa(f['total_now'])} {cash()} است و طلا ندارید.")
 
-    L += ["", f"قیمت طلا الان {fa(f['mid'])} تتر است."]
-    if MARKET["name"] != "والکس":
-        L.append(f"(قیمت‌ها از {MARKET['name']} و به دلار است؛ هر دلار تقریباً ۱ تتر حساب شده. "
+    L += ["", f"قیمت طلا الان {fa(f['mid'])} {cash()} است."]
+    if MARKET["cash_code"] == "USD":
+        L.append("(قیمت نقد جهانی طلا به دلار است؛ قیمت کارگزار یا فروشنده شما کمی با آن فرق دارد.)")
+    if MARKET["unit"] != MARKET["cash"]:
+        L.append(f"(قیمت‌ها از {MARKET['name']} و به دلار است؛ هر دلار تقریباً ۱ {cash()} حساب شده. "
                  f"کارمزد و فاصله خرید و فروش هم مال {MARKET['name']} است.)")
     if f["trend"] == "DOWN":
         L.append("در چند ماه اخیر قیمت پایین آمده.")
@@ -518,7 +552,7 @@ def short_text(answers, f, opinion):
     elif xaut > 0:
         advice = "هدف شما نقد کردن است؛ ربات درباره زمان فروش نظری نمی‌دهد. هزینه‌اش را بالا نوشتیم."
     else:
-        advice = "هدف شما نقد کردن است و دارایی شما همین الان تتر است."
+        advice = f"هدف شما نقد کردن است و دارایی شما همین الان {cash()} است."
     L += ["", f"🤖 نظر ربات: {advice}", "",
           "ربات خودش خرید و فروش نمی‌کند. برای توضیح بیشتر «جزئیات کامل» را بزنید."]
     return "\n".join(L)
@@ -533,7 +567,7 @@ SIGNAL_REMINDER = ("یادآوری: در ۲۰ سال گذشته، عمل کرد�
 
 
 def signal_word(v):
-    return "داده کافی نیست" if v is None else ("طلا 🟡" if v else "تتر 💵")
+    return "داده کافی نیست" if v is None else ("طلا 🟡" if v else f"{cash()} 💵")
 
 
 def signal_vote(signals):
@@ -551,7 +585,7 @@ def signal_vote(signals):
         who = f"{fa(max(gold, usdt))} روش از {fa(len(known))} روش"
     if gold > usdt:
         return f"{who} می‌گویند الان بهتر است طلا داشته باشید."
-    return f"{who} می‌گویند الان بهتر است پول در تتر باشد، نه طلا."
+    return f"{who} می‌گویند الان بهتر است پول در {cash()} باشد، نه طلا."
 def jalali_now():
     now = pd.Timestamp.now(tz="Asia/Tehran")
     jy, jm, jd = to_jalali(now.year, now.month, now.day)
@@ -601,8 +635,8 @@ def signal_change_text(changes, signals, price):
         L.append(f"قیمت طلا: {fa(price)} {MARKET['unit']}")
     L.append("")
     for m, old, new in changes:
-        L.append(f"روش «{SIGNAL_PLAIN[m]}» تا حالا می‌گفت {'طلا' if old else 'تتر'}، "
-                 f"حالا می‌گوید {'طلا' if new else 'تتر'}.")
+        L.append(f"روش «{SIGNAL_PLAIN[m]}» تا حالا می‌گفت {'طلا' if old else cash()}، "
+                 f"حالا می‌گوید {'طلا' if new else cash()}.")
     L += ["", f"جمع‌بندی: {signal_vote(signals)}", "", SIGNAL_REMINDER]
     return "\n".join(L)
 
@@ -965,9 +999,12 @@ def write_log(answers, f, opinion):
 
 
 def main():
+    import sys
+    if "--global" in sys.argv[1:]:
+        use_global()
     book = fetch_book()
     answers = ask_questions(None if book is None else (book["bid"] + book["ask"]) / 2)
-    print("\n Fetching live data from Wallex (about 30 seconds)...")
+    print(f"\n Fetching live data ({SYMBOL}, about 30 seconds)...")
     daily = fetch_daily()
     book = fetch_book()
     facts = compute_facts(answers, daily, book)

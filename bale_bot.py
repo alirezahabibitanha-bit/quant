@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
+bale_bot.py - مشاور طلا روی پیام‌رسان «بله» (طلا و تتر از والکس، یا طلا و دلار از بازار جهانی)
 
 همان سؤال‌ها و همان گزارش advisor.py را در بله می‌دهد. هیچ خرید و فروشی انجام نمی‌دهد.
 
@@ -21,12 +21,18 @@ bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
 متاتریدر (سرور آلمان):
   با «--metatrader» همه قیمت‌ها (۲ دقیقه، روزانه، قیمت لحظه‌ای) از متاتریدر (mt_bridge.py) خوانده می‌شود، نه والکس.
 
+بازار جهانی (طلا و دلار، بدون والکس و بدون تتر):
+  با «--global» قیمت‌ها از بازار جهانی (global_gold.py) خوانده می‌شود و سؤال‌ها دلار و اونس می‌پرسند.
+  همه لاگ‌ها و فایل‌های وضعیت در پوشه global/ کنار کد نوشته می‌شوند تا با لاگ‌های قدیمی والکس قاطی نشوند.
+  «پیش‌بینی ۲ دقیقه» در این حالت نیست (داده دقیقه‌ای رایگان بازار جهانی حدود ۱۰ دقیقه عقب است).
+
 هوش مصنوعی:
   اگر ~/.gemini_key باشد، هر درخواست «پیش‌بینی ۲ دقیقه»، «پیش‌بینی حدودی»، «گزارش» و «سیگنال امروز»
   یک بار از جیمینای نظر می‌گیرد و زیر گزارش ربات با برچسب آزمایشی می‌گذارد (news_ai.py).
 
 اجرا:
   python3 bale_bot.py                              # بله، برای امتحان
+  python3 bale_bot.py --global                     # بله، طلا و دلار از بازار جهانی
   python3 bale_bot.py --telegram --metatrader      # سرور آلمان
   دائمی: با فایل bale-bot.service یا telegram-bot.service (راهنما داخل همان فایل‌ها)
 """
@@ -288,6 +294,18 @@ Q_XAUT = ("۲) چقدر طلا دارید؟\n"
           "به واحد XAUT، همان عددی که در کیف پولتان می‌بینید.\n"
           "هر ۱ XAUT = ۱ اونس ≈ ۳۱٫۱ گرم طلا. مثلاً ۰٫۰۵\n"
           "اگر طلا ندارید ۰ بنویسید.")
+Q_USD = "۱) چند دلار (پول نقد، غیر از طلا) دارید؟\nفقط عدد بنویسید، مثلاً ۲۵۰"
+Q_OUNCE = ("۲) چقدر طلا دارید؟\n"
+           "به اونس. هر ۱ اونس ≈ ۳۱٫۱ گرم طلا؛ مثلاً ۱۰ گرم ≈ ۰٫۳۲ اونس.\n"
+           "اگر طلا ندارید ۰ بنویسید.")
+
+
+def q_cash():
+    return Q_USD if advisor.MARKET["cash_code"] == "USD" else Q_USDT
+
+
+def q_gold():
+    return Q_OUNCE if advisor.MARKET["cash_code"] == "USD" else Q_XAUT
 
 
 # ---------------------------------------------------------------- گفتگو
@@ -305,8 +323,8 @@ class Conversation:
         buttons = [BTN_REPORT, BTN_NEW] if has_saved else [BTN_NEW]
         if chat_id in self.details:
             buttons = [BTN_DETAILS] + buttons
-        buttons += [BTN_SIGNAL, BTN_FORECAST, BTN_2MIN]
-        if mt_bridge.has_data():
+        buttons += [BTN_SIGNAL, BTN_FORECAST] + ([BTN_2MIN] if advisor.MARKET["minutes"] else [])
+        if advisor.MARKET["name"] == "متاتریدر" and mt_bridge.has_data():
             buttons.append(BTN_MT)
         buttons.append(BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON)
         self.bot.send(chat_id, text, buttons, cols=2)
@@ -348,15 +366,16 @@ class Conversation:
     def start_questions(self, chat_id):
         self.answers[chat_id] = {}
         self.step[chat_id] = "usdt"
-        self.bot.send(chat_id, Q_USDT, [BTN_CANCEL])
+        self.bot.send(chat_id, q_cash(), [BTN_CANCEL])
 
     def ask_buy_price(self, chat_id):
         self.step[chat_id] = "buy_price"
         price = self.adv.market_price()
         self.market[chat_id] = price
-        hint = f"\nقیمت الان حدود {advisor.fa(price)} تتر است." if price else ""
+        c = advisor.cash()
+        hint = f"\nقیمت الان حدود {advisor.fa(price)} {c} است." if price else ""
         self.bot.send(chat_id, "میانگین قیمت خرید طلا چقدر بوده؟\n"
-                               "به تتر، برای هر ۱ XAUT (یعنی قیمت هر اونس، نه هر گرم)." + hint,
+                               f"به {c}، برای {advisor.per_gold()} (نه هر گرم)." + hint,
                       [BTN_CANCEL])
 
     def ask_goal(self, chat_id):
@@ -387,7 +406,7 @@ class Conversation:
             self.step.pop(chat_id, None)
             self.main_menu(chat_id, mt_bridge.status_text())
             return
-        if text == BTN_2MIN:
+        if text == BTN_2MIN and advisor.MARKET["minutes"]:
             self.step.pop(chat_id, None)
             self.send_2min(chat_id)
             return
@@ -413,7 +432,7 @@ class Conversation:
             return
         if text in ("/start", BTN_CANCEL) or (step is None and text not in (BTN_REPORT, BTN_NEW)):
             self.step.pop(chat_id, None)
-            self.main_menu(chat_id, "سلام. من مشاور طلا و تتر هستم و هیچ خرید و فروشی انجام نمی‌دهم.\n"
+            self.main_menu(chat_id, f"سلام. من مشاور طلا و {advisor.cash()} هستم و هیچ خرید و فروشی انجام نمی‌دهم.\n"
                                     "یکی از دکمه‌ها را انتخاب کنید.")
             return
         if text == BTN_NEW:
@@ -436,7 +455,7 @@ class Conversation:
             a[step] = value
             if step == "usdt":
                 self.step[chat_id] = "xaut"
-                self.bot.send(chat_id, Q_XAUT, [BTN_CANCEL])
+                self.bot.send(chat_id, q_gold(), [BTN_CANCEL])
             elif step == "xaut" and value > 0:
                 self.ask_buy_price(chat_id)
             elif step == "xaut":
@@ -446,7 +465,7 @@ class Conversation:
                 self.step[chat_id] = "confirm_price"
                 self.bot.send(chat_id, f"⚠️ قیمت {advisor.fa(value, 2)} خیلی با قیمت امروز "
                                        f"({advisor.fa(self.market[chat_id])}) فرق دارد.\n"
-                                       "شاید قیمت هر گرم را زده‌اید؟ قیمت باید برای هر ۱ XAUT (هر اونس) باشد.",
+                                       f"شاید قیمت هر گرم را زده‌اید؟ قیمت باید برای {advisor.per_gold()} باشد.",
                               [BTN_KEEP, BTN_RETRY, BTN_CANCEL])
             else:
                 self.ask_goal(chat_id)
@@ -526,7 +545,8 @@ def check_signal_change(bot, adv):
         return
     now = pd.Timestamp.now(tz="Asia/Tehran").strftime("%Y-%m-%d %H:%M")
     rows = [{"changed_at": now, "price": None if price is None else round(price, 2), "method": m,
-             "old": "GOLD" if old else "USDT", "new": "GOLD" if new else "USDT"} for m, old, new in changes]
+             "old": "GOLD" if old else advisor.MARKET["cash_code"],
+             "new": "GOLD" if new else advisor.MARKET["cash_code"]} for m, old, new in changes]
     pd.DataFrame(rows).to_csv(SIGNAL_LOG_PATH, mode="a", header=not os.path.exists(SIGNAL_LOG_PATH),
                               index=False)
     allowed = read_allowed()
@@ -545,6 +565,13 @@ def main():
     if "--metatrader" in sys.argv[1:]:
         advisor.use_metatrader()
         print(" Prices come from MetaTrader (mt_bridge.py), not Wallex.")
+    if "--global" in sys.argv[1:]:
+        advisor.use_global()
+        # لاگ‌ها و وضعیت جدا از لاگ‌های والکس (همه مسیرهای لاگ نسبی‌اند)
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "global")
+        os.makedirs(folder, exist_ok=True)
+        os.chdir(folder)
+        print(f" Prices come from the global market (global_gold.py): gold and US dollars. Logs in {folder}")
     print(" AI advice: " + (f"on ({news_ai.model_name()})" if news_ai.configured() else
                             f"off (no {news_ai.KEY_PATH})"))
     token = read_file(TOKEN_PATH)

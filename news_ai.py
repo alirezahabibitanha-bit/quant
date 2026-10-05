@@ -65,7 +65,7 @@ KINDS = {
              "within the hour, or breaking news right now)"),
     "forecast": ("a forecast of the gold price range 1 week and 1 month from now",
                  "chance of an unusually big move in the coming days because of scheduled events or breaking news"),
-    "report": ("a personal report on the user's holdings (USDT and gold), profit/loss and goal",
+    "report": ("a personal report on the user's holdings (cash in US dollars or USDT, and gold), profit/loss and goal",
                "chance of an unusually big move in the coming days"),
     "signal": ("today's long-term trend signals from three tested methods",
                "chance of an unusually big move in the coming days"),
@@ -80,7 +80,7 @@ EVIDENCE = """What the bot's own tests found (real data, costs included; keep yo
 - Nobody has shown that news tone predicts direction; that is exactly what is being tested now."""
 
 PROMPT = """You are a careful assistant to a personal gold advisor bot. The bot never trades; the user decides.
-The bot just produced {what}. Its report (Persian) is below, made from live MetaTrader prices (XAU/USD).
+The bot just produced {what}. Its report (Persian) is below, made from live gold prices in US dollars (XAU/USD).
 
 --- BOT REPORT ---
 {report}

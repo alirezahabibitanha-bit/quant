@@ -245,3 +245,6 @@ mt_bars.csv
 *.tmp
 mt_daily.csv
 ai_log.csv
+
+# Gold/USD (global market) bot: logs and state
+global/

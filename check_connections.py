@@ -5,12 +5,14 @@ check_connections.py - بررسی این‌که سرور به همه جاهای 
 
 روی سرور اجرا کنید:
   python3 ~/quant/check_connections.py          # همه چیز
+  python3 ~/quant/check_connections.py --wallex # والکس را هم بررسی کن
   python3 ~/quant/check_connections.py --news   # همراه با یک تحلیل کامل اخبار با جیمینای (کمی طول می‌کشد)
 
 برای هر مورد OK یا FAIL و دلیلش را چاپ می‌کند (انگلیسی، چون ترمینال فارسی را درست نشان نمی‌دهد):
   Telegram  - ربات تلگرام (با ~/.telegram_token اگر باشد)
   Bale      - ربات بله (فقط اگر ~/.bale_token باشد)
-  Wallex    - داده والکس (فقط روی سرور ایران، یعنی اگر ~/.bale_token باشد)
+  Gold USD  - قیمت جهانی طلا به دلار برای ربات بله (فقط روی سرور ایران، یعنی اگر ~/.bale_token باشد)
+  Wallex    - داده والکس (فقط با --wallex؛ ربات بله دیگر از والکس نمی‌خواند)
   Gemini    - جیمینای (با ~/.gemini_key)
   MetaTrader- گیرنده mt_bridge.py، آخرین قیمت، و داده روزانه
   MT5       - برنامه متاتریدر روی همین سرور (سرویس mt5)
@@ -67,6 +69,21 @@ def check_wallex():
     if not book:
         return show("Wallex", False, "empty order book. Wallex may block this server's country.")
     return show("Wallex", True, f"XAUTUSDT bid {book['bid']:.2f} / ask {book['ask']:.2f}")
+
+
+def check_global():
+    try:
+        import global_gold
+        spot = global_gold.spot_price()
+        daily = global_gold.fetch_daily()
+    except (Exception, SystemExit) as e:
+        return show("Gold USD", False, f"no daily prices ({str(e)[:120]}). If this is the Iran server, run "
+                                       "'bash foreign_setup.sh update' on the foreign server (relay/README.md).")
+    if not spot:
+        return show("Gold USD", False, f"daily OK ({len(daily)} days) but no live spot price; "
+                                       "reports will use yesterday's close.")
+    via = "tunnel" if global_gold._read(global_gold.BASE_URL_PATH) else "direct"
+    return show("Gold USD", True, f"spot {spot:,.2f} USD, {len(daily)} daily prices ({via})")
 
 
 def check_gemini(full):
@@ -140,7 +157,8 @@ def main():
     print("== Checking connections from this server...")
     results = [check_bot("Telegram", "https://api.telegram.org/bot{token}/{method}", "~/.telegram_token", True),
                check_bot("Bale", "https://tapi.bale.ai/bot{token}/{method}", "~/.bale_token", False),
-               check_wallex() if read("~/.bale_token") else None,
+               check_global() if read("~/.bale_token") else None,
+               check_wallex() if "--wallex" in sys.argv[1:] else None,
                check_gemini("--news" in sys.argv[1:]), check_mt(), check_mt5_service()]
     bad = sum(r is False for r in results)
     print("== All good." if not bad else f"== {bad} problem(s). See the lines marked FAIL.")
