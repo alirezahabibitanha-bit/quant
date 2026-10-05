@@ -135,11 +135,16 @@ if [ -f "$HOME/.gemini_base_url" ]; then
 fi
 
 echo "== 6/8 Firewall (only SSH open; Remote Desktop and the price receiver are reachable only inside the server)..."
-SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
-SSH_PORT=${SSH_PORT:-22}
-ufw allow "$SSH_PORT/tcp" >/dev/null
+# همه درگاه‌هایی که SSH رویشان گوش می‌دهد باز می‌مانند (مثلاً اگر برای ایران درگاه 443 هم اضافه شده)،
+# به‌علاوه درگاهی که همین الان با آن وصل هستید؛ تا هیچ‌وقت خودتان را از سرور بیرون نیندازید.
+SSH_PORTS=$( { sshd -T 2>/dev/null | awk '/^port /{print $2}'
+               systemctl show -p Listen ssh.socket 2>/dev/null | grep -oE ':[0-9]+ ' | tr -d ': '
+               [ -n "${SSH_CONNECTION:-}" ] && echo "$SSH_CONNECTION" | awk '{print $4}'; } | sort -un)
+SSH_PORTS=${SSH_PORTS:-22}
+for P in $SSH_PORTS; do ufw allow "$P/tcp" >/dev/null; done
 ufw --force enable >/dev/null
-echo "   open: $SSH_PORT (SSH)"
+SSH_PORT=$( [ -n "${SSH_CONNECTION:-}" ] && echo "$SSH_CONNECTION" | awk '{print $4}' || echo "$SSH_PORTS" | head -1)
+echo "   open (SSH): $(echo $SSH_PORTS)"
 
 echo "== 7/8 Services..."
 cp mt-bridge.service telegram-bot.service mt5.service /etc/systemd/system/
