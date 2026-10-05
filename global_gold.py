@@ -16,6 +16,8 @@ global_gold.py - قیمت طلای بازار جهانی به دلار (XAU/USD)
     پس ربات خودش (start_collector، یک رشته پس‌زمینه) هر ۱۰ ثانیه قیمت Swissquote را می‌گیرد و هر دقیقه
     یک کندل (قیمت وسط خرید و فروش) در global_bars.csv می‌نویسد (UTC، ۳ روز آخر). «پیش‌بینی ۲ دقیقه» از این فایل
     کار می‌کند و حدود ۸۰ دقیقه داده لازم دارد. قیمتی که بیش از ۲ دقیقه کهنه باشد (بازار بسته) ثبت نمی‌شود.
+    Swissquote از ایران مستقیم باز نمی‌شود؛ اگر نرسید، کندل‌ها از gold-api ساخته می‌شوند (دقیقه‌ای یک قیمت تازه؛
+    برای کندل ۲ دقیقه‌ای کافی است، ولی قیمت تا حدود ۱ دقیقه عقب است). live_source() می‌گوید الان کدام است.
 
 راه رسیدن از ایران:
   اگر ~/.gemini_base_url باشد (تونل سرور ایران به سرور خارج، relay/README.md)، اول از همان تونل می‌رود
@@ -46,7 +48,9 @@ COLLECT_SECONDS = 10
 BARS_PATH = "global_bars.csv"   # نسبی: در حالت --global، پوشه global/
 KEEP_SECONDS = 3 * 86400
 MIN_BARS = 40                # همان حداقل advisor.fetch_minutes (کندل ۲ دقیقه‌ای)
-_spot = {"at": 0.0, "price": None}
+_spot = {"at": 0.0, "price": None, "age": None, "told_at": 0.0}
+GOLDAPI_MAX_AGE = 180        # gold-api دقیقه‌ای یک بار به‌روز می‌شود؛ کهنه‌تر از این = بازار بسته
+_source = {"name": None}
 _quote = {"at": 0.0, "q": None, "failed_at": 0.0, "told_at": 0.0}
 FAIL_PAUSE = 60              # بعد از خطای Swissquote، این‌قدر ثانیه سراغش نرو (گزارش‌ها منتظر نمانند)
 FAIL_LOG_EVERY = 600         # خطای Swissquote حداکثر هر ۱۰ دقیقه یک بار در لاگ
@@ -122,17 +126,35 @@ def spot_price():
     q = swissquote()
     if q:
         return (q["bid"] + q["ask"]) / 2
+    g = goldapi()
+    return g["price"] if g else None
+
+
+def goldapi():
+    """{'price','age'} از gold-api (یک قیمت، دقیقه‌ای یک بار به‌روز). age = ثانیه از آخرین به‌روزرسانی. اگر نشد None."""
     if time.time() - _spot["at"] < SPOT_CACHE_SECONDS and _spot["price"]:
-        return _spot["price"]
+        return {"price": _spot["price"], "age": _spot["age"]}
     try:
-        p = float(_get_json(f"{GOLDAPI}/price/XAU", "goldapi", timeout=15)["price"])
+        d = _get_json(f"{GOLDAPI}/price/XAU", "goldapi", timeout=15)
+        p = float(d["price"])
+        try:
+            age = time.time() - pd.Timestamp(d["updatedAt"]).timestamp()
+        except Exception:
+            age = None
     except Exception as e:
-        print(f" Spot gold price failed: {e}")
+        if time.time() - _spot["told_at"] > FAIL_LOG_EVERY:
+            _spot["told_at"] = time.time()
+            print(f" gold-api price failed (next report in 10 min): {str(e)[:300]}")
         return None
     if not 100 < p < 100000:
         return None
-    _spot.update(at=time.time(), price=p)
-    return p
+    _spot.update(at=time.time(), price=p, age=age)
+    return {"price": p, "age": age}
+
+
+def live_source():
+    """منبعی که جمع‌آوری کندل دقیقه‌ای الان از آن می‌خواند: 'swissquote'، 'gold-api' یا None (هیچ‌کدام / بازار بسته)."""
+    return _source["name"]
 
 
 def futures_daily():
@@ -209,9 +231,16 @@ def _collect_loop():
     while True:
         t0 = time.time()
         try:
-            q = swissquote()
+            q, mid = swissquote(), None
             if q and q["age"] < QUOTE_MAX_AGE:
-                mid = (q["bid"] + q["ask"]) / 2
+                mid, _source["name"] = (q["bid"] + q["ask"]) / 2, "swissquote"
+            else:
+                g = goldapi()
+                if g and (g["age"] is None or g["age"] < GOLDAPI_MAX_AGE):
+                    mid, _source["name"] = g["price"], "gold-api"
+                else:
+                    _source["name"] = None
+            if mid is not None:
                 m = int(t0 // 60) * 60
                 if minute is not None and m != minute:
                     _append_bar(minute, o, c)

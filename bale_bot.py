@@ -357,6 +357,11 @@ class Conversation:
             self.bot.send(chat_id, "در حال حساب کردن و گرفتن نظر هوش مصنوعی... (تا ۳۰ ثانیه)")
         try:
             text = advisor.two_min_text(advisor.fetch_minutes(), advisor.fetch_book(), ai=True)
+            if advisor.MARKET["cash_code"] == "USD":
+                import global_gold
+                if global_gold.live_source() == "gold-api":
+                    text += ("\n\nℹ️ قیمت لحظه‌ای از gold-api است که دقیقه‌ای یک بار به‌روز می‌شود؛ "
+                             "پس «آخرین قیمت» ممکن است تا ۱ دقیقه عقب باشد.")
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" 2-minute forecast failed: {e}")
             if advisor.MARKET["cash_code"] == "USD":
