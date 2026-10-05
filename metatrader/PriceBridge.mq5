@@ -5,9 +5,9 @@
 //|                                                                   |
 //| Setup (see metatrader/README.md):                                 |
 //|  1. Tools > Options > Expert Advisors > "Allow WebRequest for     |
-//|     listed URL" and add  http://YOUR_SERVER_IP:8787               |
+//|     listed URL" and add  http://127.0.0.1:8787                    |
 //|  2. Attach this EA to ONE chart (e.g. XAUUSD) and fill:           |
-//|     ServerURL = http://YOUR_SERVER_IP:8787/mt/push                |
+//|     ServerURL = http://127.0.0.1:8787/mt/push (MT on the server)  |
 //|     Secret    = the text in ~/.mt_bridge_secret on the server     |
 //|  The PC clock must be correct (automatic time sync on).           |
 //+------------------------------------------------------------------+
@@ -15,10 +15,13 @@
 #property version     "1.00"
 #property description "Sends prices to mt_bridge.py. Never trades."
 
-input string ServerURL   = "http://YOUR_SERVER_IP:8787/mt/push"; // server address
+input string ServerURL   = "http://127.0.0.1:8787/mt/push";    // server address (same server = 127.0.0.1)
 input string Secret      = "";                                  // from ~/.mt_bridge_secret
 input int    PushSeconds = 10;                                  // send every N seconds
 input int    FirstBars   = 600;                                 // M1 bars sent on (re)connect
+input int    DailyBars   = 600;                                 // D1 closes (about 2.4 years)
+
+datetime g_daily_sent = 0;  // last time the daily closes were sent (every hour)
 
 bool g_need_full = true;   // after start or an error, send a longer history
 int  g_last_state = 0;     // 1 = ok, -1 = error (print only when it changes)
@@ -89,6 +92,22 @@ void Push()
               + Num(r[i].low) + "," + Num(r[i].close) + "," + IntegerToString(r[i].tick_volume) + "]";
      }
 
+   // daily closes: on (re)connect and once an hour
+   bool send_daily = g_need_full || TimeLocal() - g_daily_sent >= 3600;
+   string daily = "";
+   if(send_daily)
+     {
+      MqlRates d[];
+      ArraySetAsSeries(d, false);
+      int nd = CopyRates(_Symbol, PERIOD_D1, 1, DailyBars, d);   // from 1 = only finished days
+      for(int i = 0; i < nd; i++)
+        {
+         if(i > 0)
+            daily += ",";
+         daily += "[" + IntegerToString((long)d[i].time) + "," + Num(d[i].close) + "]";
+        }
+     }
+
    string broker = AccountInfoString(ACCOUNT_COMPANY);
    StringReplace(broker, "\"", "");
    StringReplace(broker, "\\", "");
@@ -98,7 +117,8 @@ void Push()
                  + ",\"bid\":" + Num(tick.bid) + ",\"ask\":" + Num(tick.ask)
                  + ",\"tick_time\":" + IntegerToString((long)tick.time)
                  + ",\"gmt_offset\":" + IntegerToString(offset)
-                 + ",\"bars\":[" + bars + "]}";
+                 + ",\"bars\":[" + bars + "]"
+                 + ",\"daily\":[" + daily + "]}";
 
    long ts = (long)TimeGMT();
    uchar data[], tosign[], key[], hash[];
@@ -133,6 +153,8 @@ void Push()
       return;
      }
    g_need_full = false;
+   if(send_daily)
+      g_daily_sent = TimeLocal();
    Report(1, "PriceBridge: connected, sending " + _Symbol + " every " + IntegerToString(PushSeconds) + " s.");
   }
 //+------------------------------------------------------------------+

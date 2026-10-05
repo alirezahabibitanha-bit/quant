@@ -1,39 +1,48 @@
 #!/bin/bash
-# setup.sh - آماده کردن سرور آلمان (ربات تلگرام + جیمینای مستقیم + گیرنده متاتریدر)
+# setup.sh - آماده کردن سرور آلمان: ربات تلگرام + جیمینای + متاتریدر ۵ روی همین سرور
 #
-# روی یک سرور تازه Ubuntu 22.04/24.04، با کاربر root:
+# روی یک سرور تازه Ubuntu 24.04 (یا 22.04)، x86_64، با کاربر root:
 #   bash setup.sh
 # چند بار اجرا کردنش ضرری ندارد؛ کارهای انجام‌شده را دوباره نمی‌کند.
 #
 # کارها به ترتیب:
-#   1. نصب کتابخانه‌ها از apt (همان‌هایی که سرور ایران دارد)
-#   2. ساختن Swap (اگر نباشد)، تا رم پر نشود
-#   3. گرفتن کد از GitHub در /root/quant (اگر مخزن خصوصی باشد، یک «کلید فقط‌خواندنی» می‌سازد
-#      و می‌گوید کجای GitHub بگذارید)
-#   4. ساختن رمز مشترک متاتریدر (~/.mt_bridge_secret)
-#   5. دیوار آتش: فقط SSH و درگاه 8787 (گیرنده متاتریدر) باز
-#   6. نصب سرویس‌ها: mt-bridge همیشه؛ telegram-bot وقتی ~/.telegram_token باشد
-#   7. بررسی همه اتصال‌ها با check_connections.py
-# کلیدها (تلگرام، جیمینای) را این اسکریپت نمی‌سازد و نمی‌بیند؛ خودتان با nano می‌گذارید (راهنما: germany/README.md).
+#   1. نصب کتابخانه‌های پایتون از apt (همان‌هایی که سرور ایران دارد)
+#   2. ساختن Swap (اگر نباشد)
+#   3. گرفتن کد از GitHub در /root/quant (اگر مخزن خصوصی باشد، یک «کلید فقط‌خواندنی» می‌سازد)
+#   4. نصب Wine (برای اجرای متاتریدر ویندوزی روی لینوکس) و یک میز کار سبک (XFCE) با «Remote Desktop»
+#      - کاربر جدا به اسم trader برای متاتریدر (رمزش را یک بار می‌پرسد)
+#      - Remote Desktop از اینترنت بسته است؛ فقط از راه تونل رمزشده SSH (راهنما: germany/README.md)
+#   5. ساختن رمز مشترک متاتریدر و کپی اکسپرت PriceBridge برای trader
+#   6. دیوار آتش: فقط SSH باز
+#   7. نصب سرویس‌ها: mt-bridge (گیرنده قیمت)، telegram-bot (اگر ~/.telegram_token باشد)،
+#      mt5 (متاتریدر بدون صفحه نمایش؛ وقتی متاتریدر یک بار نصب و تنظیم شد)
+#   8. بررسی اتصال‌ها با check_connections.py
+# کلیدها (تلگرام، جیمینای، رمز حساب متاتریدر) را این اسکریپت نمی‌سازد و نمی‌بیند.
 
 set -euo pipefail
 
 REPO="alirezahabibitanha-bit/quant"
 DIR=/root/quant
 DEPLOY_KEY="$HOME/.ssh/github_quant"
-MT_PORT=8787
+TRADER=trader
+MT5_EXE="/home/$TRADER/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "!! Run this as root."
     exit 1
 fi
+if [ "$(dpkg --print-architecture)" != "amd64" ]; then
+    echo "!! This server is not x86_64 (amd64). MetaTrader/Wine needs an x86_64 server, not ARM."
+    exit 1
+fi
+. /etc/os-release
 
-echo "== 1/7 Installing packages (a few minutes)..."
+echo "== 1/8 Installing Python packages..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
-apt-get install -y -q python3 python3-pandas python3-requests python3-numpy git ufw curl screen openssl
+apt-get install -y -q python3 python3-pandas python3-requests python3-numpy git ufw curl wget screen openssl
 
-echo "== 2/7 Swap..."
+echo "== 2/8 Swap..."
 if swapon --show | grep -q .; then
     echo "   swap already on."
 else
@@ -45,7 +54,7 @@ else
     echo "   2 GB swap created."
 fi
 
-echo "== 3/7 Getting the code from GitHub..."
+echo "== 3/8 Getting the code from GitHub..."
 if [ -d "$DIR/.git" ]; then
     echo "   $DIR already exists; to update it later use ~/quant/update.sh"
 elif GIT_TERMINAL_PROMPT=0 git clone -q "https://github.com/$REPO.git" "$DIR" 2>/dev/null; then
@@ -77,29 +86,50 @@ else
 fi
 cd "$DIR"
 
-echo "== 4/7 MetaTrader secret..."
+echo "== 4/8 Wine, light desktop and Remote Desktop (several minutes)..."
+if ! command -v wine >/dev/null; then
+    dpkg --add-architecture i386
+    install -d -m 755 /etc/apt/keyrings
+    wget -q -O /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+    wget -q -O "/etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources" \
+        "https://dl.winehq.org/wine-builds/ubuntu/dists/$VERSION_CODENAME/winehq-$VERSION_CODENAME.sources"
+    apt-get update -q
+    apt-get install -y -q --install-recommends winehq-stable
+fi
+apt-get install -y -q xfce4 xfce4-terminal dbus-x11 xrdp xvfb
+adduser --quiet xrdp ssl-cert 2>/dev/null || true
+if ! id "$TRADER" >/dev/null 2>&1; then
+    adduser --quiet --disabled-password --gecos "" "$TRADER"
+    echo "   Choose a password for the Remote Desktop user '$TRADER':"
+    until passwd "$TRADER"; do echo "   Try again."; done
+fi
+echo "xfce4-session" > "/home/$TRADER/.xsession"
+chown "$TRADER:$TRADER" "/home/$TRADER/.xsession"
+systemctl enable --quiet --now xrdp
+
+echo "== 5/8 MetaTrader secret and files for $TRADER..."
 if [ ! -s "$HOME/.mt_bridge_secret" ]; then
     openssl rand -hex 24 > "$HOME/.mt_bridge_secret"
     echo "   new secret created in ~/.mt_bridge_secret"
-else
-    echo "   secret already exists."
 fi
 chmod 600 "$HOME/.mt_bridge_secret"
+install -o "$TRADER" -g "$TRADER" -m 600 "$HOME/.mt_bridge_secret" "/home/$TRADER/mt_bridge_secret.txt"
+install -o "$TRADER" -g "$TRADER" -m 644 metatrader/PriceBridge.mq5 "/home/$TRADER/PriceBridge.mq5"
+install -o "$TRADER" -g "$TRADER" -m 755 germany/mt5_install.sh "/home/$TRADER/mt5_install.sh"
 if [ -f "$HOME/.gemini_base_url" ]; then
     echo "   WARNING: ~/.gemini_base_url exists. It is only for the Iran server (tunnel)."
     echo "            Here Gemini is reached directly. Remove it with:  rm ~/.gemini_base_url"
 fi
 
-echo "== 5/7 Firewall (only SSH and MetaTrader port open)..."
+echo "== 6/8 Firewall (only SSH open; Remote Desktop and the price receiver are reachable only inside the server)..."
 SSH_PORT=$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')
 SSH_PORT=${SSH_PORT:-22}
 ufw allow "$SSH_PORT/tcp" >/dev/null
-ufw allow "$MT_PORT/tcp" >/dev/null
 ufw --force enable >/dev/null
-echo "   open: $SSH_PORT (SSH), $MT_PORT (MetaTrader)"
+echo "   open: $SSH_PORT (SSH)"
 
-echo "== 6/7 Services..."
-cp mt-bridge.service telegram-bot.service /etc/systemd/system/
+echo "== 7/8 Services..."
+cp mt-bridge.service telegram-bot.service mt5.service /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --quiet --now mt-bridge
 systemctl restart mt-bridge
@@ -109,17 +139,27 @@ if [ -s "$HOME/.telegram_token" ]; then
     echo "   telegram-bot started."
     [ -s "$HOME/.telegram_allowed" ] || echo "   (no ~/.telegram_allowed yet: the bot only tells people their id)"
 else
-    echo "   telegram-bot NOT started yet: put the token in ~/.telegram_token"
-    echo "   (see germany/README.md), then run this script again."
+    echo "   telegram-bot NOT started yet: put the token in ~/.telegram_token, then run this script again."
+fi
+if [ -f "$MT5_EXE" ]; then
+    if loginctl list-sessions --no-legend 2>/dev/null | grep -qw "$TRADER"; then
+        echo "   mt5 NOT started: $TRADER is logged in with Remote Desktop. Close MetaTrader (File > Exit),"
+        echo "   log out of Remote Desktop, then run:  systemctl enable --now mt5"
+    else
+        systemctl enable --quiet --now mt5
+        echo "   mt5 (MetaTrader without screen) started."
+    fi
+else
+    echo "   MetaTrader is not installed yet. Next: Remote Desktop -> run ~/mt5_install.sh (see germany/README.md)."
 fi
 sleep 3
 
-echo "== 7/7 Checking connections..."
+echo "== 8/8 Checking connections..."
 python3 check_connections.py || true
 
 IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')
 echo
-echo "== Done. For the PriceBridge expert in MetaTrader:"
-echo "   Allowed URL : http://$IP:$MT_PORT"
-echo "   ServerURL   : http://$IP:$MT_PORT/mt/push"
-echo "   Secret      : $(cat "$HOME/.mt_bridge_secret")"
+echo "== Done."
+echo "   Remote Desktop (from your Windows PC, keep this window open):"
+echo "      ssh -L 33389:127.0.0.1:3389 -p $SSH_PORT root@$IP"
+echo "   then open 'Remote Desktop Connection' and connect to:  localhost:33389   (user: $TRADER)"

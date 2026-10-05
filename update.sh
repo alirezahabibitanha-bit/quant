@@ -66,6 +66,18 @@ for SVC in bale-bot telegram-bot mt-bridge; do
     systemctl restart "$SVC"
 done
 
+# متاتریدر (فقط سرور آلمان): کدش ربطی به این مخزن ندارد؛ فقط اگر فایل سرویسش عوض شد نصب می‌شود.
+# اگر اکسپرت PriceBridge عوض شد، باید در Remote Desktop دوباره کپی شود (germany/README.md).
+if systemctl is-enabled --quiet mt5 2>/dev/null && git diff --name-only "$OLD" HEAD | grep -qx "mt5.service"; then
+    echo "== mt5.service changed; installing the new one..."
+    cp mt5.service /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl restart mt5
+fi
+if git diff --name-only "$OLD" HEAD | grep -qx "metatrader/PriceBridge.mq5"; then
+    echo "!! PriceBridge.mq5 changed. Copy the new one into MetaTrader (see germany/README.md)."
+fi
+
 if [ "$FOUND" = 0 ]; then
     echo "== Updated. No service is installed, so restart the bot yourself."
     exit 0

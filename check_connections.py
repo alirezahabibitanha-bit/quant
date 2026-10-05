@@ -10,9 +10,10 @@ check_connections.py - بررسی این‌که سرور به همه جاهای 
 برای هر مورد OK یا FAIL و دلیلش را چاپ می‌کند (انگلیسی، چون ترمینال فارسی را درست نشان نمی‌دهد):
   Telegram  - ربات تلگرام (با ~/.telegram_token اگر باشد)
   Bale      - ربات بله (فقط اگر ~/.bale_token باشد)
-  Wallex    - داده والکس (ممکن است صرافی‌های ایرانی آی‌پی خارج را ببندند؛ همین را می‌سنجد)
+  Wallex    - داده والکس (فقط روی سرور ایران، یعنی اگر ~/.bale_token باشد)
   Gemini    - جیمینای (با ~/.gemini_key)
-  MetaTrader- گیرنده mt_bridge.py و آخرین قیمت رسیده
+  MetaTrader- گیرنده mt_bridge.py، آخرین قیمت، و داده روزانه
+  MT5       - برنامه متاتریدر روی همین سرور (سرویس mt5)
 """
 import os
 import sys
@@ -92,10 +93,11 @@ def check_gemini(full):
         return show("Gemini", False, f"HTTP {r.status_code}: {msg[:200]}")
     if not full:
         return show("Gemini", True, f"model {model} available (run with --news for a full news test)")
-    view = news_ai.news_view(force=True)
+    view = news_ai.advise("forecast", "(connection test: no bot report)")
     if view is None:
         return show("Gemini", False, "model found, but the news analysis failed (see message above)")
-    return show("Gemini", True, f"news tone {view['tone']}, confidence {view['confidence']}, risk {view['risk']}")
+    return show("Gemini", True, f"news tone {view['tone']}, confidence {view['confidence']}, risk {view['risk']}, "
+                                f"{view['seconds']} s")
 
 
 def check_mt():
@@ -110,15 +112,36 @@ def check_mt():
     if t is None:
         return show("MetaTrader", False, "receiver is running, but nothing has arrived from MetaTrader yet")
     age = time.time() - t["received_at"]
-    return show("MetaTrader", mt_bridge.is_fresh(t),
-                f"{t['symbol']} bid {t['bid']} / ask {t['ask']}, last packet {age:.0f} s ago")
+    ok = show("MetaTrader", mt_bridge.is_fresh(t),
+              f"{t['symbol']} bid {t['bid']} / ask {t['ask']}, last packet {age:.0f} s ago")
+    try:
+        days = len(mt_bridge.fetch_daily())
+        show("MT daily", days >= 430, f"{days} days of daily prices (430+ needed for all signals)")
+    except (Exception, SystemExit) as e:
+        show("MT daily", False, f"{e}")
+    return ok
+
+
+def check_mt5_service():
+    import subprocess
+    try:
+        r = subprocess.run(["systemctl", "is-active", "mt5"], capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if r.stdout.strip() == "active":
+        return show("MT5", True, "MetaTrader is running on this server (service mt5)")
+    enabled = subprocess.run(["systemctl", "is-enabled", "mt5"], capture_output=True, text=True).stdout.strip()
+    if enabled in ("enabled", "disabled"):
+        return show("MT5", False, "service mt5 is not running (journalctl -u mt5 -n 30)")
+    return None
 
 
 def main():
     print("== Checking connections from this server...")
     results = [check_bot("Telegram", "https://api.telegram.org/bot{token}/{method}", "~/.telegram_token", True),
                check_bot("Bale", "https://tapi.bale.ai/bot{token}/{method}", "~/.bale_token", False),
-               check_wallex(), check_gemini("--news" in sys.argv[1:]), check_mt()]
+               check_wallex() if read("~/.bale_token") else None,
+               check_gemini("--news" in sys.argv[1:]), check_mt(), check_mt5_service()]
     bad = sum(r is False for r in results)
     print("== All good." if not bad else f"== {bad} problem(s). See the lines marked FAIL.")
 
