@@ -1,0 +1,29 @@
+# mt-bridge.service - گیرنده قیمت‌های متاتریدر (mt_bridge.py) روی سرور آلمان
+#
+# این فایل به لینوکس می‌گوید گیرنده را با روشن شدن سرور اجرا کن و اگر بسته شد دوباره روشنش کن.
+# germany/setup.sh این را خودش نصب می‌کند. نصب دستی (یک بار):
+#   cp ~/quant/mt-bridge.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now mt-bridge
+#
+# دستورهای روزمره:
+#   وضعیت:          systemctl status mt-bridge
+#   پیام‌ها:         journalctl -u mt-bridge -n 30
+#   روشن کردن دوباره: systemctl restart mt-bridge
+
+[Unit]
+Description=MetaTrader price receiver for the personal gold advisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/root/quant
+ExecStart=/usr/bin/python3 /root/quant/mt_bridge.py 8787
+Environment=HOME=/root
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
