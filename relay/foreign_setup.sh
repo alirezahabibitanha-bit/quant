@@ -17,7 +17,8 @@
 #
 # علاوه بر جیمینای، دو مسیر دیگر هم هست (برای ربات طلا و دلار، global_gold.py):
 #   /yahoo/    ← query1.finance.yahoo.com (قیمت روزانه طلا)
-#   /goldapi/  ← api.gold-api.com (قیمت لحظه‌ای طلا)
+#   /swissquote/ ← forex-data-feed.swissquote.com (قیمت لحظه‌ای طلا)
+#   /goldapi/  ← api.gold-api.com (قیمت لحظه‌ای طلا، پشتیبان)
 
 set -euo pipefail
 
@@ -65,6 +66,19 @@ server {
         proxy_read_timeout 30s;
         access_log off;
     }
+    location /swissquote/ {
+        proxy_pass https://forex-data-feed.swissquote.com/;
+        proxy_ssl_server_name on;
+        proxy_ssl_name forex-data-feed.swissquote.com;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_set_header Host forex-data-feed.swissquote.com;
+        proxy_set_header Cookie "";
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        access_log off;
+    }
     location /goldapi/ {
         proxy_pass https://api.gold-api.com/;
         proxy_ssl_server_name on;
@@ -101,7 +115,7 @@ systemctl restart nginx
 
 if [ "$UPDATE_ONLY" = "1" ]; then
     echo "== Testing gold price routes..."
-    for path in "/yahoo/v8/finance/chart/GC=F?interval=1d&range=5d" "/goldapi/price/XAU"; do
+    for path in "/yahoo/v8/finance/chart/GC=F?interval=1d&range=5d" "/swissquote/public-quotes/bboquotes/instrument/XAU/USD" "/goldapi/price/XAU"; do
         CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "http://127.0.0.1:${RELAY_PORT}${path}" || true)
         echo "   ${path%%\?*}: code $CODE (200 = OK)"
     done

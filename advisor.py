@@ -183,14 +183,15 @@ def use_metatrader():
 
 def use_global():
     """منبع همه قیمت‌ها را از والکس به بازار جهانی (global_gold.py: یاهو + gold-api) عوض می‌کند.
-    دارایی کاربر دلار و طلا (اونس) است؛ تتر و والکس هیچ جا نمی‌آید. داده دقیقه‌ای زنده ندارد."""
+    دارایی کاربر دلار و طلا (اونس) است؛ تتر و والکس هیچ جا نمی‌آید.
+    کندل دقیقه‌ای را خود ربات جمع می‌کند (global_gold.start_collector)."""
     global fetch_daily, fetch_book, fetch_minutes, FEE, MARKET, SYMBOL
     import global_gold
     fetch_daily, fetch_book, fetch_minutes = global_gold.fetch_daily, global_gold.fetch_book, global_gold.fetch_minutes
     FEE = global_gold.fee()
     SYMBOL = "XAUUSD"
     MARKET = {"name": "بازار جهانی", "unit": "دلار", "digits": 2,
-              "cash": "دلار", "cash_code": "USD", "gold": "اونس", "minutes": False}
+              "cash": "دلار", "cash_code": "USD", "gold": "اونس", "minutes": True}
 
 
 def cash():

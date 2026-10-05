@@ -24,7 +24,8 @@ bale_bot.py - مشاور طلا روی پیام‌رسان «بله» (طلا و
 بازار جهانی (طلا و دلار، بدون والکس و بدون تتر):
   با «--global» قیمت‌ها از بازار جهانی (global_gold.py) خوانده می‌شود و سؤال‌ها دلار و اونس می‌پرسند.
   همه لاگ‌ها و فایل‌های وضعیت در پوشه global/ کنار کد نوشته می‌شوند تا با لاگ‌های قدیمی والکس قاطی نشوند.
-  «پیش‌بینی ۲ دقیقه» در این حالت نیست (داده دقیقه‌ای رایگان بازار جهانی حدود ۱۰ دقیقه عقب است).
+  قیمت لحظه‌ای از Swissquote؛ ربات خودش هر ۱۰ ثانیه قیمت می‌گیرد و کندل دقیقه‌ای می‌سازد (global/global_bars.csv)
+  تا «پیش‌بینی ۲ دقیقه» کار کند. بعد از اولین روشن شدن حدود ۸۰ دقیقه طول می‌کشد تا داده کافی جمع شود.
 
 هوش مصنوعی:
   اگر ~/.gemini_key باشد، هر درخواست «پیش‌بینی ۲ دقیقه»، «پیش‌بینی حدودی»، «گزارش» و «سیگنال امروز»
@@ -308,6 +309,18 @@ def q_gold():
     return Q_OUNCE if advisor.MARKET["cash_code"] == "USD" else Q_XAUT
 
 
+def global_minutes_note():
+    """چرا پیش‌بینی ۲ دقیقه در حالت بازار جهانی هنوز آماده نیست."""
+    import global_gold
+    n, age = global_gold.minutes_status()
+    if age is not None and age > 10 and n == 0:
+        return ("بازار جهانی طلا الان بسته است (آخر هفته یا تعطیلی)، یا قیمت تازه نمی‌رسد.\n"
+                "پیش‌بینی ۲ دقیقه وقتی بازار باز است کار می‌کند.")
+    need = global_gold.MIN_BARS * 2
+    return (f"ربات دارد قیمت لحظه‌ای را جمع می‌کند؛ تا الان {advisor.fa(min(n, need))} دقیقه از {advisor.fa(need)} "
+            f"دقیقه لازم.\nحدود {advisor.fa(max(need - n, 1))} دقیقه دیگر دوباره امتحان کنید.")
+
+
 # ---------------------------------------------------------------- گفتگو
 
 class Conversation:
@@ -346,6 +359,9 @@ class Conversation:
             text = advisor.two_min_text(advisor.fetch_minutes(), advisor.fetch_book(), ai=True)
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" 2-minute forecast failed: {e}")
+            if advisor.MARKET["cash_code"] == "USD":
+                self.main_menu(chat_id, global_minutes_note())
+                return
             self.main_menu(chat_id, f"گرفتن قیمت دقیقه‌ای از {advisor.MARKET['name']} نشد. "
                                     "کمی بعد دوباره امتحان کنید.")
             return
@@ -571,6 +587,8 @@ def main():
         folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "global")
         os.makedirs(folder, exist_ok=True)
         os.chdir(folder)
+        import global_gold
+        global_gold.start_collector()
         print(f" Prices come from the global market (global_gold.py): gold and US dollars. Logs in {folder}")
     print(" AI advice: " + (f"on ({news_ai.model_name()})" if news_ai.configured() else
                             f"off (no {news_ai.KEY_PATH})"))
