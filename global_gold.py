@@ -79,15 +79,26 @@ def _get_json(direct_url, relay_prefix, params=None, timeout=20):
         host = next(h for h in (YAHOO, SWISSQUOTE, GOLDAPI) if direct_url.startswith(h))
         tries.append((base.rstrip("/") + "/" + relay_prefix + direct_url[len(host):], None))
     tries.append((direct_url, None))
-    err = None
+    errs = []
     for url, proxies in tries:
         try:
             r = requests.get(url, params=params, headers=HEADERS, timeout=timeout, proxies=proxies)
             r.raise_for_status()
             return r.json()
         except (requests.RequestException, ValueError) as e:
-            err = e
-    raise RuntimeError(f"{direct_url.split('?')[0]}: {err}")
+            way = "proxy" if proxies else ("tunnel" if url != direct_url else "direct")
+            errs.append(f"{way}: {_short(e)}")
+    raise RuntimeError(f"{direct_url.split('?')[0]} -> " + " | ".join(errs))
+
+
+def _short(e):
+    """خلاصه خطا برای لاگ (خطاهای اتصال requests خیلی طولانی‌اند)."""
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return f"HTTP {e.response.status_code}"
+    for kind in ("ConnectTimeout", "ReadTimeout", "ProxyError", "SSLError", "ConnectionError"):
+        if kind in type(e).__name__ or kind in str(e):
+            return f"{kind} ({str(e)[-120:]})" if kind in ("ProxyError", "SSLError") else kind
+    return f"{type(e).__name__}: {str(e)[:120]}"
 
 
 def route():
@@ -128,7 +139,7 @@ def swissquote():
             if tell:
                 _quote["told_at"] = time.time()
         if tell:
-            print(f" Swissquote price failed (next report in 10 min): {str(e)[:300]}")
+            print(f" Swissquote price failed (next report in 10 min): {str(e)[:400]}")
         return None
     if not (100 < q["bid"] <= q["ask"] < 100000 and q["ask"] / q["bid"] < 1.01):
         return None
