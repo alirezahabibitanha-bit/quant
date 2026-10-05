@@ -611,11 +611,12 @@ def forecast_text(daily, price):
         price = float(daily.iloc[-1])
     L = [f"🔮 قیمت طلا در آینده نزدیک — {jalali_now()}", f"قیمت الان: {fa(price)} تتر", "",
          "هیچ‌کس نمی‌داند طلا بالا می‌رود یا پایین. ولی می‌دانیم معمولاً چقدر تکان می‌خورد:", ""]
-    rows = []
+    rows, base_ranges = [], []
     now = pd.Timestamp.now(tz="Asia/Tehran").strftime("%Y-%m-%d %H:%M")
     for days, label in FORECAST_HORIZONS:
         (lo1, hi1), (lo2, hi2) = price_range(daily, price, days)
         L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo1)} و {fa(hi1)} تتر")
+        base_ranges.append((days, label.replace('تا ', ''), lo1, hi1))
         rows.append({"made_at": now, "price": round(price, 2), "days": days,
                      "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
                      "sure_low": round(lo2, 2), "sure_high": round(hi2, 2)})
@@ -631,6 +632,11 @@ def forecast_text(daily, price):
             L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo)} و {fa(hi)} تتر")
         L += ["این روش زودتر می‌فهمد بازار آرام شده یا شلوغ. در ۲۰ سال خطایش کمی کمتر بود،",
               "ولی وقت‌های آرام بازه را بیش از لازم پهن می‌گرفت. هنوز ثابت نشده؛ فقط برای مقایسه است."]
+    try:   # اثر اخبار با جیمینای (news_ai.py)؛ آزمایشی. اگر کلید نباشد یا خطا بدهد، پیام بدون آن می‌رود
+        import news_ai
+        L += news_ai.forecast_section(price, base_ranges, now, fa)
+    except Exception as e:
+        print(f" News section skipped: {e}")
     return "\n".join(L)
 
 

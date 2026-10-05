@@ -234,3 +234,14 @@ forecast_shadow_log.csv
 forecast_2min_trial_log.csv
 forecast_2min_v2.csv
 forecast_2min_scores.csv
+# Telegram bot state, news (Gemini) and MetaTrader bridge files
+tg_answers.json
+tg_subs.json
+tg_signals.json
+tg_signal_changes.csv
+news_cache.json
+news_log.csv
+news_forecast_log.csv
+mt_tick.json
+mt_bars.csv
+*.tmp

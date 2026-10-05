@@ -13,18 +13,26 @@ bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
     فایل با هر پیام دوباره خوانده می‌شود؛ بعد از اضافه کردن شناسه، لازم نیست ربات را دوباره روشن کنید.
     اگر این فایل نباشد، ربات به هر کسی فقط شناسه خودش را می‌گوید و گزارشی نمی‌دهد.
 
+تلگرام:
+  همین ربات با «--telegram» روی تلگرام اجرا می‌شود (API بله کپی API تلگرام است؛ فقط آدرس فرق دارد).
+  فایل‌های تلگرام جدا هستند: ~/.telegram_token، ~/.telegram_allowed، ~/.telegram_denied
+  و فایل‌های وضعیت با پیشوند tg_ (مثلاً tg_answers.json). پس هر دو ربات می‌توانند روی یک سرور کنار هم باشند.
+
 اجرا:
-  python3 bale_bot.py                 # برای امتحان
-  دائمی: با فایل bale-bot.service (راهنما داخل همان فایل)
+  python3 bale_bot.py                 # بله، برای امتحان
+  python3 bale_bot.py --telegram      # تلگرام، برای امتحان
+  دائمی: با فایل bale-bot.service یا telegram-bot.service (راهنما داخل همان فایل‌ها)
 """
 import json
 import os
+import sys
 import time
 
 import pandas as pd
 import requests
 
 import advisor
+import mt_bridge
 
 TOKEN_PATH = os.path.expanduser("~/.bale_token")
 ALLOWED_PATH = os.path.expanduser("~/.bale_allowed")
@@ -35,6 +43,7 @@ SIGNAL_STATE_PATH = "bale_signals.json"   # آخرین سیگنال‌های د�
 SIGNAL_LOG_PATH = "signal_changes.csv"    # هر تغییر سیگنال با تاریخ و قیمت
 SIGNAL_CHECK_SECONDS = 6 * 3600      # هر ۶ ساعت سیگنال‌ها چک شوند
 API = "https://tapi.bale.ai/bot{token}/{method}"
+PLATFORM = "Bale"
 DAILY_CACHE_SECONDS = 3600           # قیمت‌های روزانه هر یک ساعت یک بار تازه شوند
 
 BTN_REPORT = "گزارش با جواب‌های قبلی"
@@ -43,6 +52,7 @@ BTN_DETAILS = "جزئیات کامل"
 BTN_SIGNAL = "📡 سیگنال امروز"
 BTN_FORECAST = "🔮 پیش‌بینی حدودی"
 BTN_2MIN = "⏱ پیش‌بینی ۲ دقیقه"
+BTN_MT = "📈 قیمت متاتریدر"
 BTN_ALERT_ON = "🔔 خبرم کن وقتی سیگنال عوض شد"
 BTN_ALERT_OFF = "🔕 دیگر خبرم نکن"
 BTN_CANCEL = "لغو"
@@ -54,6 +64,21 @@ FA_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩٫", "0123456
 
 
 # ---------------------------------------------------------------- تنظیمات
+
+def use_telegram():
+    """همه آدرس‌ها و فایل‌ها را برای تلگرام عوض می‌کند (به جای بله)."""
+    global API, PLATFORM, TOKEN_PATH, ALLOWED_PATH, DENIED_PATH
+    global STATE_PATH, SUBS_PATH, SIGNAL_STATE_PATH, SIGNAL_LOG_PATH
+    API = "https://api.telegram.org/bot{token}/{method}"
+    PLATFORM = "Telegram"
+    TOKEN_PATH = os.path.expanduser("~/.telegram_token")
+    ALLOWED_PATH = os.path.expanduser("~/.telegram_allowed")
+    DENIED_PATH = os.path.expanduser("~/.telegram_denied")
+    STATE_PATH = "tg_answers.json"
+    SUBS_PATH = "tg_subs.json"
+    SIGNAL_STATE_PATH = "tg_signals.json"
+    SIGNAL_LOG_PATH = "tg_signal_changes.csv"
+
 
 def read_file(path):
     try:
@@ -257,8 +282,10 @@ class Conversation:
         buttons = [BTN_REPORT, BTN_NEW] if has_saved else [BTN_NEW]
         if chat_id in self.details:
             buttons = [BTN_DETAILS] + buttons
-        buttons += [BTN_SIGNAL, BTN_FORECAST, BTN_2MIN,
-                    BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON]
+        buttons += [BTN_SIGNAL, BTN_FORECAST, BTN_2MIN]
+        if mt_bridge.has_data():
+            buttons.append(BTN_MT)
+        buttons.append(BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON)
         self.bot.send(chat_id, text, buttons, cols=2)
 
     def send_forecast(self, chat_id):
@@ -328,6 +355,10 @@ class Conversation:
         text = (text or "").strip()
         step = self.step.get(chat_id)
 
+        if text == BTN_MT:
+            self.step.pop(chat_id, None)
+            self.main_menu(chat_id, mt_bridge.status_text())
+            return
         if text == BTN_2MIN:
             self.step.pop(chat_id, None)
             self.send_2min(chat_id)
@@ -481,12 +512,14 @@ def check_signal_change(bot, adv):
 # ---------------------------------------------------------------- حلقه اصلی
 
 def main():
+    if "--telegram" in sys.argv[1:]:
+        use_telegram()
     token = read_file(TOKEN_PATH)
     if not token:
         raise SystemExit(f"Bot token not found. Put it in {TOKEN_PATH} (one line).")
     bot = Bale(token)
     me = bot.call("getMe")
-    print(f" Connected to Bale as @{me.get('username')}")
+    print(f" Connected to {PLATFORM} as @{me.get('username')}")
     allowed = read_allowed()
     if allowed:
         print(f" Allowed chat ids: {len(allowed)} (owner: {allowed[0]})")
