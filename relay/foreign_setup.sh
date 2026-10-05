@@ -11,6 +11,13 @@
 #   2. کاربر محدود "relay" را می‌سازد که فقط می‌تواند تونل بزند (نه دستور اجرا کند، نه فایل ببیند).
 #   3. دیوار آتش (ufw) را روشن می‌کند و فقط درگاه SSH را باز می‌گذارد.
 # اجرای دوباره بی‌خطر است (کلید قبلی با کلید جدید جایگزین می‌شود).
+#
+# به‌روز کردن تنظیمات واسطه بدون عوض کردن کلید (مثلاً برای اضافه شدن قیمت جهانی طلا):
+#   bash foreign_setup.sh update
+#
+# علاوه بر جیمینای، دو مسیر دیگر هم هست (برای ربات طلا و دلار، global_gold.py):
+#   /yahoo/    ← query1.finance.yahoo.com (قیمت روزانه طلا)
+#   /goldapi/  ← api.gold-api.com (قیمت لحظه‌ای طلا)
 
 set -euo pipefail
 
@@ -21,7 +28,14 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "!! Run this as root."
     exit 1
 fi
-if [[ ! "$PUBKEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [^\"]*)?$ ]]; then
+UPDATE_ONLY=0
+if [ "$PUBKEY" = "update" ]; then
+    if [ ! -s /home/relay/.ssh/authorized_keys ]; then
+        echo "!! No tunnel key on this server yet. Run the full setup first (with the key from iran_setup.sh)."
+        exit 1
+    fi
+    UPDATE_ONLY=1
+elif [[ ! "$PUBKEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [^\"]*)?$ ]]; then
     echo "!! Give the key printed by iran_setup.sh, in quotes:"
     echo '     bash foreign_setup.sh "ssh-ed25519 AAAA... gemini-relay"'
     exit 1
@@ -37,6 +51,32 @@ cat > /etc/nginx/sites-available/gemini-relay <<EOF
 # Gemini relay: only reachable from this machine (and so only through the SSH tunnel)
 server {
     listen 127.0.0.1:${RELAY_PORT};
+    # gold prices for the gold/USD bot (global_gold.py); read-only public data
+    location /yahoo/ {
+        proxy_pass https://query1.finance.yahoo.com/;
+        proxy_ssl_server_name on;
+        proxy_ssl_name query1.finance.yahoo.com;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_set_header Host query1.finance.yahoo.com;
+        proxy_set_header Cookie "";
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        access_log off;
+    }
+    location /goldapi/ {
+        proxy_pass https://api.gold-api.com/;
+        proxy_ssl_server_name on;
+        proxy_ssl_name api.gold-api.com;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_set_header Host api.gold-api.com;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 30s;
+        access_log off;
+    }
     location / {
         proxy_pass https://generativelanguage.googleapis.com;
         proxy_ssl_server_name on;
@@ -58,6 +98,16 @@ rm -f /etc/nginx/sites-enabled/default
 nginx -t -q
 systemctl enable --quiet nginx
 systemctl restart nginx
+
+if [ "$UPDATE_ONLY" = "1" ]; then
+    echo "== Testing gold price routes..."
+    for path in "/yahoo/v8/finance/chart/GC=F?interval=1d&range=5d" "/goldapi/price/XAU"; do
+        CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "http://127.0.0.1:${RELAY_PORT}${path}" || true)
+        echo "   ${path%%\?*}: code $CODE (200 = OK)"
+    done
+    echo "== Done. Relay config updated; tunnel key and firewall unchanged."
+    exit 0
+fi
 
 echo "== Creating the tunnel-only user 'relay'..."
 if ! id relay >/dev/null 2>&1; then

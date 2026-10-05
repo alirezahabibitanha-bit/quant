@@ -16,17 +16,19 @@
 #   روشن کردن دوباره (بعد از عوض کردن کد):   systemctl restart bale-bot
 #   خاموش کردن:     systemctl stop bale-bot
 #
+# «--global» = طلا و دلار از بازار جهانی (نه والکس، نه تتر). لاگ‌ها در ~/quant/global/.
+# برای برگشتن به والکس و تتر، «--global» را از خط ExecStart بردارید.
 # اگر پوشه پروژه جای دیگری است، /root/quant را در دو خط پایین عوض کنید.
 
 [Unit]
-Description=Bale bot for the personal gold/USDT advisor
+Description=Bale bot for the personal gold/USD advisor (global market)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=root
 WorkingDirectory=/root/quant
-ExecStart=/usr/bin/python3 /root/quant/bale_bot.py
+ExecStart=/usr/bin/python3 /root/quant/bale_bot.py --global
 Environment=HOME=/root
 Environment=PYTHONUNBUFFERED=1
 Restart=always
