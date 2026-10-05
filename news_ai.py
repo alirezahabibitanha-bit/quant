@@ -24,7 +24,8 @@ news_ai.py - گرفتن نظر هوش مصنوعی (جیمینای) و یکی ک
 
 تنظیمات (روی سرور، هرگز در کد یا GitHub):
   ~/.gemini_key        کلید جیمینای (لازم)
-  ~/.gemini_base_url   فقط روی سرور ایران (آدرس تونل). روی سرور آلمان نباید باشد.
+  ~/.proxy_url         فقط روی سرور ایران (پروکسی Xray، relay/xray_setup.sh). اگر باشد، تونل استفاده نمی‌شود.
+  ~/.gemini_base_url   فقط روی سرور ایران (آدرس تونل SSH). روی سرور آلمان هیچ‌کدام نباید باشد.
   ~/.gemini_model      اختیاری؛ اسم مدل (پیش‌فرض DEFAULT_MODEL)
 
 امتحان در ترمینال:
@@ -38,6 +39,8 @@ import time
 import numpy as np
 import pandas as pd
 import requests
+
+import net_proxy
 
 KEY_PATH = os.path.expanduser("~/.gemini_key")
 BASE_URL_PATH = os.path.expanduser("~/.gemini_base_url")
@@ -128,6 +131,14 @@ def model_name():
     return _read(MODEL_PATH) or DEFAULT_MODEL
 
 
+def route():
+    """(آدرس پایه، پروکسی). با پروکسی مستقیم سراغ گوگل می‌رود؛ وگرنه تونل (اگر هست) یا مستقیم."""
+    px = net_proxy.proxies()
+    if px:
+        return DEFAULT_BASE, px
+    return (_read(BASE_URL_PATH) or DEFAULT_BASE).rstrip("/"), None
+
+
 # ---------------------------------------------------------------- گرفتن جواب از جیمینای
 
 def ask_gemini(prompt, timeout=60, use_search=True):
@@ -135,7 +146,7 @@ def ask_gemini(prompt, timeout=60, use_search=True):
     key = _read(KEY_PATH)
     if not key:
         raise RuntimeError(f"No Gemini key in {KEY_PATH}")
-    base = (_read(BASE_URL_PATH) or DEFAULT_BASE).rstrip("/")
+    base, px = route()
     model = model_name()
     gen = {"temperature": 0.2}
     if model.startswith("gemini-2.5-flash"):
@@ -143,7 +154,7 @@ def ask_gemini(prompt, timeout=60, use_search=True):
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}], "generationConfig": gen}
     if use_search:
         body["tools"] = [{"google_search": {}}]
-    r = requests.post(f"{base}/v1beta/models/{model}:generateContent", json=body, timeout=timeout,
+    r = requests.post(f"{base}/v1beta/models/{model}:generateContent", json=body, timeout=timeout, proxies=px,
                       headers={"x-goog-api-key": key, "Content-Type": "application/json"})
     try:
         d = r.json()
@@ -290,8 +301,8 @@ def forecast_section(price, ranges, made_at, fa, report):
 def main():
     if not configured():
         raise SystemExit(f"No Gemini key. Put it in {KEY_PATH} (one line).")
-    base = _read(BASE_URL_PATH) or DEFAULT_BASE
-    print(f" Asking Gemini ({model_name()}) via {base} ...")
+    base, px = route()
+    print(f" Asking Gemini ({model_name()}) via {base}" + (f" (proxy {px['https']})" if px else "") + " ...")
     view = advise("forecast", "(test from the terminal: no bot report)")
     if view is None:
         raise SystemExit("Gemini did not answer. See the message above.")

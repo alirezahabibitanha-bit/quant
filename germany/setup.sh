@@ -129,10 +129,12 @@ chmod 600 "$HOME/.mt_bridge_secret"
 install -o "$TRADER" -g "$TRADER" -m 600 "$HOME/.mt_bridge_secret" "/home/$TRADER/mt_bridge_secret.txt"
 install -o "$TRADER" -g "$TRADER" -m 644 metatrader/PriceBridge.mq5 "/home/$TRADER/PriceBridge.mq5"
 install -o "$TRADER" -g "$TRADER" -m 755 germany/mt5_install.sh "/home/$TRADER/mt5_install.sh"
-if [ -f "$HOME/.gemini_base_url" ]; then
-    echo "   WARNING: ~/.gemini_base_url exists. It is only for the Iran server (tunnel)."
-    echo "            Here Gemini is reached directly. Remove it with:  rm ~/.gemini_base_url"
-fi
+for f in .gemini_base_url .proxy_url; do
+    if [ -f "$HOME/$f" ]; then
+        echo "   WARNING: ~/$f exists. It is only for the Iran server."
+        echo "            Here Gemini is reached directly. Remove it with:  rm ~/$f"
+    fi
+done
 
 echo "== 6/8 Firewall (only SSH open; Remote Desktop and the price receiver are reachable only inside the server)..."
 # همه درگاه‌هایی که SSH رویشان گوش می‌دهد باز می‌مانند (مثلاً اگر برای ایران درگاه 443 هم اضافه شده)،

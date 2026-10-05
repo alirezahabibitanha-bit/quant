@@ -77,12 +77,12 @@ def check_global():
         spot = global_gold.spot_price()
         daily = global_gold.fetch_daily()
     except (Exception, SystemExit) as e:
-        return show("Gold USD", False, f"no daily prices ({str(e)[:120]}). If this is the Iran server, run "
-                                       "'bash foreign_setup.sh update' on the foreign server (relay/README.md).")
+        return show("Gold USD", False, f"no daily prices ({str(e)[:120]}). If this is the Iran server, check the proxy "
+                                       "('bash ~/quant/relay/xray_setup.sh test') or the tunnel (relay/README.md).")
     if not spot:
         return show("Gold USD", False, f"daily OK ({len(daily)} days) but no live spot price; "
                                        "reports will use yesterday's close.")
-    via = "tunnel" if global_gold._read(global_gold.BASE_URL_PATH) else "direct"
+    via = global_gold.route()
     q = global_gold.swissquote()
     live = (f"Swissquote bid {q['bid']:,.2f} / ask {q['ask']:,.2f}" if q else
             "Swissquote FAILED (using gold-api; no 2-minute forecast)")
@@ -94,12 +94,15 @@ def check_gemini(full):
     key = read(news_ai.KEY_PATH)
     if not key:
         return show("Gemini", False, f"no key in {news_ai.KEY_PATH}")
-    base = (read(news_ai.BASE_URL_PATH) or news_ai.DEFAULT_BASE).rstrip("/")
+    base, px = news_ai.route()
     model = read(news_ai.MODEL_PATH) or news_ai.DEFAULT_MODEL
-    if read(news_ai.BASE_URL_PATH):
+    if px:
+        print(f"       note: using proxy {px['https']} (needed only on the Iran server)")
+    elif read(news_ai.BASE_URL_PATH):
         print(f"       note: using {base} from {news_ai.BASE_URL_PATH} (needed only on the Iran server)")
     try:
-        r = requests.get(f"{base}/v1beta/models/{model}", headers={"x-goog-api-key": key}, timeout=20)
+        r = requests.get(f"{base}/v1beta/models/{model}", headers={"x-goog-api-key": key}, timeout=20,
+                         proxies=px)
     except Exception as e:
         return show("Gemini", False, f"cannot reach {base}: {type(e).__name__}")
     if r.status_code != 200:
