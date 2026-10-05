@@ -239,9 +239,9 @@ tg_answers.json
 tg_subs.json
 tg_signals.json
 tg_signal_changes.csv
-news_cache.json
-news_log.csv
 news_forecast_log.csv
 mt_tick.json
 mt_bars.csv
 *.tmp
+mt_daily.csv
+ai_log.csv

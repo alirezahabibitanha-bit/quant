@@ -1,0 +1,30 @@
+# mt5.service - اجرای متاتریدر ۵ روی سرور آلمان، بدون صفحه نمایش، همیشه روشن
+#
+# متاتریدر برنامه ویندوزی است؛ این‌جا با Wine و یک صفحه نمایش مجازی (xvfb) اجرا می‌شود.
+# اول باید یک بار با Remote Desktop نصب و تنظیم شده باشد (germany/README.md). setup.sh این را نصب می‌کند.
+#
+# مهم: وقتی می‌خواهید با Remote Desktop در متاتریدر چیزی را عوض کنید، اول این سرویس را خاموش کنید
+# (دو متاتریدر هم‌زمان روی یک پوشه مشکل می‌سازد):
+#   systemctl stop mt5        ... تغییرات در Remote Desktop ... File > Exit ...   systemctl start mt5
+#
+# دستورهای روزمره:
+#   وضعیت:   systemctl status mt5
+#   پیام‌ها:  journalctl -u mt5 -n 30
+
+[Unit]
+Description=MetaTrader 5 (Wine, no screen) for the personal gold advisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=trader
+WorkingDirectory=/home/trader
+Environment=HOME=/home/trader
+Environment=WINEPREFIX=/home/trader/.mt5
+Environment=WINEDEBUG=-all
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x800x24" /usr/bin/wine "/home/trader/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

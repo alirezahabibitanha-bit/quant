@@ -21,9 +21,11 @@ mt_bridge.py - گرفتن قیمت زنده از متاتریدر ۵
 فایل‌هایی که می‌سازد (در پوشه پروژه):
   mt_tick.json   آخرین قیمت خرید و فروش (bid/ask) و زمانش
   mt_bars.csv    کندل‌های ۱ دقیقه‌ای ۳ روز اخیر (زمان به UTC)
+  mt_daily.csv   قیمت پایانی روزانه (حدود ۲ سال؛ برای پیش‌بینی حدودی، گزارش و سیگنال‌ها)
 
 اجرا:
-  python3 mt_bridge.py               # گوش دادن روی درگاه 8787 (برای امتحان)
+  python3 mt_bridge.py                    # گوش دادن روی 127.0.0.1:8787 (متاتریدر روی همین سرور)
+  python3 mt_bridge.py 8787 0.0.0.0       # اگر متاتریدر روی کامپیوتر دیگری است (درگاه را در دیوار آتش باز کنید)
   دائمی: با فایل mt-bridge.service
 """
 import hashlib
@@ -41,6 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SECRET_PATH = os.path.expanduser("~/.mt_bridge_secret")
 TICK_PATH = os.path.join(HERE, "mt_tick.json")
 BARS_PATH = os.path.join(HERE, "mt_bars.csv")
+DAILY_PATH = os.path.join(HERE, "mt_daily.csv")
 PORT = 8787
 MAX_BODY = 1_000_000
 MAX_SKEW = 120                 # ثانیه؛ بسته قدیمی‌تر یا جلوتر از این رد می‌شود
@@ -82,6 +85,7 @@ def store(packet):
         raise ValueError("bad bid/ask")
     bars = pd.DataFrame(packet.get("bars") or [], columns=["t", "o", "h", "l", "c", "v"])
     _write_atomic(TICK_PATH, json.dumps(tick))
+    store_daily(packet.get("daily") or [])
     if bars.empty:
         return 0
     bars = bars.apply(pd.to_numeric, errors="coerce").dropna()
@@ -94,6 +98,19 @@ def store(packet):
     bars = bars[bars.time >= bars.time.max() - KEEP_DAYS * 86400]
     _write_atomic(BARS_PATH, bars.to_csv(index=False))
     return len(bars)
+
+
+def store_daily(rows):
+    """کندل‌های روزانه [زمان سرور کارگزار، قیمت پایانی]. تاریخ = تاریخ روز در ساعت کارگزار."""
+    if not rows:
+        return
+    d = pd.DataFrame(rows, columns=["t", "close"]).apply(pd.to_numeric, errors="coerce").dropna()
+    d["date"] = pd.to_datetime(d.t.astype("int64"), unit="s").dt.strftime("%Y-%m-%d")
+    d = d[["date", "close"]]
+    if os.path.exists(DAILY_PATH):
+        d = pd.concat([pd.read_csv(DAILY_PATH), d])
+    d = d.drop_duplicates("date", keep="last").sort_values("date")
+    _write_atomic(DAILY_PATH, d.to_csv(index=False))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -162,6 +179,31 @@ def is_fresh(tick=None):
     return tick is not None and time.time() - tick["received_at"] < STALE_SECONDS
 
 
+def fetch_book():
+    """بهترین قیمت خرید و فروش متاتریدر به همان شکل advisor.fetch_book. اگر کهنه یا نبود None."""
+    t = latest()
+    if t is None or not is_fresh(t):
+        return None
+    return {"bid": t["bid"], "ask": t["ask"]}
+
+
+def fetch_daily(days=None):
+    """قیمت پایانی روزانه به همان شکل advisor.fetch_daily (روزهای تقویمی، به وقت تهران، بدون امروز).
+    طلای جهانی آخر هفته بسته است؛ روزهای بسته با قیمت روز قبل پر می‌شوند. این همان تبدیلی است که
+    برای XAUTUSDT (۷ روز در هفته) انجام شده بود: دوره‌های ۸۴، ۲۹۰ و ۳۶۵ روزه تقویمی می‌مانند و
+    نوسان روزانه با تکان صفر آخر هفته‌ها، در افق‌های تقویمی (۷ و ۳۰ روز) همان نوسان واقعی می‌شود."""
+    if not os.path.exists(DAILY_PATH):
+        raise SystemExit("No MetaTrader daily data yet.")
+    d = pd.read_csv(DAILY_PATH)
+    s = pd.Series(d.close.values, index=pd.DatetimeIndex(pd.to_datetime(d.date)).tz_localize("Asia/Tehran"))
+    today = pd.Timestamp.now(tz="Asia/Tehran").normalize()
+    s = s[s.index < today]
+    if len(s) < 30:
+        raise SystemExit("Not enough MetaTrader daily data.")
+    s = s.reindex(pd.date_range(s.index[0], today - pd.Timedelta(days=1), freq="D")).ffill()
+    return s if days is None else s.iloc[-days:]
+
+
 def fetch_minutes(hours=4):
     """کندل‌های ۲ دقیقه‌ای چند ساعت اخیر، به همان شکل advisor.fetch_minutes (time به UTC، open، close)."""
     if not os.path.exists(BARS_PATH):
@@ -206,10 +248,11 @@ def status_text():
 
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else PORT
+    host = sys.argv[2] if len(sys.argv) > 2 else "127.0.0.1"
     if not read_secret():
         raise SystemExit(f"No secret. Put a long random password in {SECRET_PATH} (one line).")
-    srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    print(f" MetaTrader bridge listening on port {port} (POST /mt/push)")
+    srv = ThreadingHTTPServer((host, port), Handler)
+    print(f" MetaTrader bridge listening on {host}:{port} (POST /mt/push)")
     srv.serve_forever()
 
 

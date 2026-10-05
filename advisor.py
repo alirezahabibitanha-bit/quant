@@ -28,6 +28,7 @@ DEPTH_URL = "https://api.wallex.ir/v1/depth"
 HEADERS = {"User-Agent": "quant-research/1.0"}
 
 FEE = 0.002              # کارمزد هر طرف در بازار تتری والکس
+MARKET = {"name": "والکس", "unit": "تتر", "digits": 0}   # در حالت متاتریدر عوض می‌شود (use_metatrader)
 HISTORY_DAYS = 430       # برای سیگنال‌ها (میانگین ۲۹۰ روزه، مومنتوم ۳۶۵ روزه در آخر ماه قبل) و نوسان یک سال
 TREND_DAYS = 200         # میانگین ۲۰۰ روزه
 VOL_DAYS = 20            # نوسان «امروز» = نوسان ۲۰ روز اخیر
@@ -155,6 +156,20 @@ def fetch_book():
         return {"ask": min(asks), "bid": max(bids)}
     except Exception:
         return None
+
+
+def use_metatrader():
+    """منبع همه قیمت‌ها را از والکس به متاتریدر (mt_bridge.py) عوض می‌کند. برای سرور آلمان.
+    کارمزد هر طرف از ~/.mt_fee (درصد، مثلاً 0.005) خوانده می‌شود؛ اگر نباشد صفر (حساب‌های بدون کمیسیون)."""
+    global fetch_daily, fetch_book, fetch_minutes, FEE, MARKET
+    import mt_bridge
+    fetch_daily, fetch_book, fetch_minutes = mt_bridge.fetch_daily, mt_bridge.fetch_book, mt_bridge.fetch_minutes
+    try:
+        with open(os.path.expanduser("~/.mt_fee"), encoding="utf-8") as fh:
+            FEE = float(fh.read().strip()) / 100
+    except (FileNotFoundError, ValueError):
+        FEE = 0.0
+    MARKET = {"name": "متاتریدر", "unit": "دلار", "digits": 2}   # تکان ۲ دقیقه حدود ۱ دلار است؛ سنت لازم است
 
 
 # ---------------------------------------------------------------- واقعیت‌ها
@@ -480,6 +495,9 @@ def short_text(answers, f, opinion):
         L.append(f"دارایی شما {fa(f['total_now'])} تتر است و طلا ندارید.")
 
     L += ["", f"قیمت طلا الان {fa(f['mid'])} تتر است."]
+    if MARKET["name"] != "والکس":
+        L.append(f"(قیمت‌ها از {MARKET['name']} و به دلار است؛ هر دلار تقریباً ۱ تتر حساب شده. "
+                 f"کارمزد و فاصله خرید و فروش هم مال {MARKET['name']} است.)")
     if f["trend"] == "DOWN":
         L.append("در چند ماه اخیر قیمت پایین آمده.")
     elif f["trend"] == "UP":
@@ -550,7 +568,7 @@ def signal_text(levels, price):
     signals = {m: v["signal"] for m, v in levels.items()}
     L = [f"📡 سیگنال امروز — {jalali_now()}"]
     if price:
-        L.append(f"قیمت طلا: {fa(price)} تتر")
+        L.append(f"قیمت طلا: {fa(price)} {MARKET['unit']}")
     L += ["", signal_vote(signals), "", "چرا؟"]
     ma, mom, cr = levels["MA200_MONTHLY"], levels["MOM12_MONTHLY"], levels["CROSS_50_200"]
     if ma["line_next"] is not None and price:
@@ -580,7 +598,7 @@ def signal_change_text(changes, signals, price):
     """پیام خبر تغییر سیگنال. changes = [(روش، قبلی، الان)، ...]"""
     L = [f"🔔 یکی از سیگنال‌ها عوض شد — {jalali_now()}"]
     if price:
-        L.append(f"قیمت طلا: {fa(price)} تتر")
+        L.append(f"قیمت طلا: {fa(price)} {MARKET['unit']}")
     L.append("")
     for m, old, new in changes:
         L.append(f"روش «{SIGNAL_PLAIN[m]}» تا حالا می‌گفت {'طلا' if old else 'تتر'}، "
@@ -605,17 +623,18 @@ def price_range(daily, price, days):
     return (price * np.exp(-s), price * np.exp(s)), (price * np.exp(-2 * s), price * np.exp(2 * s))
 
 
-def forecast_text(daily, price):
-    """پیام «پیش‌بینی حدودی» + ثبت در لاگ برای سنجش بعدی."""
+def forecast_text(daily, price, ai=False):
+    """پیام «پیش‌بینی حدودی» + ثبت در لاگ برای سنجش بعدی. ai=True: جمع‌بندی هوش مصنوعی هم (news_ai.py)."""
     if price is None:
         price = float(daily.iloc[-1])
-    L = [f"🔮 قیمت طلا در آینده نزدیک — {jalali_now()}", f"قیمت الان: {fa(price)} تتر", "",
+    unit = MARKET["unit"]
+    L = [f"🔮 قیمت طلا در آینده نزدیک — {jalali_now()}", f"قیمت الان: {fa(price)} {unit}", "",
          "هیچ‌کس نمی‌داند طلا بالا می‌رود یا پایین. ولی می‌دانیم معمولاً چقدر تکان می‌خورد:", ""]
     rows, base_ranges = [], []
     now = pd.Timestamp.now(tz="Asia/Tehran").strftime("%Y-%m-%d %H:%M")
     for days, label in FORECAST_HORIZONS:
         (lo1, hi1), (lo2, hi2) = price_range(daily, price, days)
-        L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo1)} و {fa(hi1)} تتر")
+        L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo1)} و {fa(hi1)} {unit}")
         base_ranges.append((days, label.replace('تا ', ''), lo1, hi1))
         rows.append({"made_at": now, "price": round(price, 2), "days": days,
                      "likely_low": round(lo1, 2), "likely_high": round(hi1, 2),
@@ -629,14 +648,15 @@ def forecast_text(daily, price):
         L += ["", "🧪 آزمایشی — روش دوم (GARCH):"]
         for days, label in FORECAST_HORIZONS:
             lo, hi = trial[days]
-            L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo)} و {fa(hi)} تتر")
+            L.append(f"• {label.replace('تا ', '')}: به احتمال زیاد بین {fa(lo)} و {fa(hi)} {unit}")
         L += ["این روش زودتر می‌فهمد بازار آرام شده یا شلوغ. در ۲۰ سال خطایش کمی کمتر بود،",
               "ولی وقت‌های آرام بازه را بیش از لازم پهن می‌گرفت. هنوز ثابت نشده؛ فقط برای مقایسه است."]
-    try:   # اثر اخبار با جیمینای (news_ai.py)؛ آزمایشی. اگر کلید نباشد یا خطا بدهد، پیام بدون آن می‌رود
-        import news_ai
-        L += news_ai.forecast_section(price, base_ranges, now, fa)
-    except Exception as e:
-        print(f" News section skipped: {e}")
+    if ai:   # نظر هوش مصنوعی (news_ai.py)؛ آزمایشی. اگر کلید نباشد یا خطا بدهد، پیام بدون آن می‌رود
+        try:
+            import news_ai
+            L += news_ai.forecast_section(price, base_ranges, now, fa, "\n".join(L))
+        except Exception as e:
+            print(f" AI section skipped: {e}")
     return "\n".join(L)
 
 
@@ -725,10 +745,30 @@ def data_health(bars, now_utc):
     fill = len(recent) / 30
     flat = float((recent.close.diff().iloc[1:] == 0).mean()) if len(recent) > 1 else 1.0
     if age > STALE_MINUTES:
-        return False, f"آخرین معامله طلا در والکس حدود {fa(age)} دقیقه پیش بوده؛ بازار الان تقریباً خواب است."
+        return False, (f"آخرین قیمت طلا در {MARKET['name']} حدود {fa(age)} دقیقه پیش بوده؛ "
+                       "بازار الان تقریباً خواب است (یا بسته است).")
     if fill < MIN_FILL or flat > 0.5:
-        return False, "در یک ساعت اخیر معامله طلا در والکس کم بوده؛ قیمت‌ها تکه‌تکه‌اند."
+        return False, f"در یک ساعت اخیر معامله طلا در {MARKET['name']} کم بوده؛ قیمت‌ها تکه‌تکه‌اند."
     return True, ""
+
+
+def append_csv(path, rows):
+    """سطرها را به ته فایل CSV اضافه می‌کند و ستون‌ها را با سرستون فایل جور می‌کند.
+    اگر ستون تازه‌ای آمده (مثلاً ستون‌های هوش مصنوعی)، فایل یک بار با سرستون کامل‌تر بازنویسی می‌شود."""
+    new = pd.DataFrame(rows)
+    if not os.path.exists(path):
+        new.to_csv(path, index=False)
+        return
+    header = list(pd.read_csv(path, nrows=0).columns)
+    extra = [c for c in new.columns if c not in header]
+    if extra:
+        pd.concat([pd.read_csv(path), new], ignore_index=True).reindex(columns=header + extra) \
+            .to_csv(path, index=False)
+    else:
+        new.reindex(columns=header).to_csv(path, mode="a", header=False, index=False)
+
+
+SCORE_COLUMNS = ["made_at", "actual", "z", "data_ok", "in_80", "in_95", "trial_in_80", "ai_in_80", "ai_dir_hit"]
 
 
 def score_past(bars):
@@ -749,34 +789,39 @@ def score_past(bars):
                "in_80": x.low_80 <= actual <= x.high_80, "in_95": x.low_95 <= actual <= x.high_95}
         if pd.notna(x.get("trial_low_80")):
             row["trial_in_80"] = x.trial_low_80 <= actual <= x.trial_high_80
+        if pd.notna(x.get("ai_low_80")):
+            row["ai_in_80"] = x.ai_low_80 <= actual <= x.ai_high_80
+            if x.ai_tone != 0 and actual != x.price:          # فقط وقتی لحن جهت داشت و قیمت تکان خورد
+                row["ai_dir_hit"] = (x.ai_tone > 0) == (actual > x.price)
         rows.append(row)
     if rows:
-        pd.DataFrame(rows).reindex(columns=["made_at", "actual", "z", "data_ok", "in_80", "in_95", "trial_in_80"]) \
-            .to_csv(TWO_MIN_SCORE_PATH, mode="a", header=not os.path.exists(TWO_MIN_SCORE_PATH), index=False)
+        append_csv(TWO_MIN_SCORE_PATH, rows)
 
 
 def two_min_scores():
     if not os.path.exists(TWO_MIN_SCORE_PATH):
-        return pd.DataFrame(columns=["z", "data_ok", "in_80", "in_95", "trial_in_80"])
-    return pd.read_csv(TWO_MIN_SCORE_PATH)
+        return pd.DataFrame(columns=SCORE_COLUMNS)
+    return pd.read_csv(TWO_MIN_SCORE_PATH).reindex(columns=SCORE_COLUMNS)
 
 
 def two_min_quantiles(scores):
     """چندک‌های بازه ۸۰٪ و ۹۵٪ و منبعشان. فقط از پیش‌بینی‌های گذشته (بدون نگاه به آینده)."""
     own = scores[scores.data_ok.astype(bool)].z.dropna().abs() if len(scores) else pd.Series(dtype=float)
     if len(own) >= TWO_MIN_SELF_CALIB:
-        absz, source = np.sort(own.values[-TWO_MIN_SELF_WINDOW:]), "wallex"
+        absz, source = np.sort(own.values[-TWO_MIN_SELF_WINDOW:]), "own"
     else:
         from forecast_models import two_min_abs_z
         absz, source = _cached("absz", two_min_abs_z), "global"
     return [float(np.quantile(absz, p)) for p in TWO_MIN_LEVELS], absz, source
 
 
-def two_min_text(bars, book=None, now=None):
-    """پیام «پیش‌بینی ۲ دقیقه». book = {'bid','ask'} از fetch_book یا None. now فقط برای آزمایش."""
+def two_min_text(bars, book=None, now=None, ai=False):
+    """پیام «پیش‌بینی ۲ دقیقه». book = {'bid','ask'} از fetch_book یا None. now فقط برای آزمایش.
+    ai=True: نظر هوش مصنوعی هم گرفته، بازه «با اثر اخبار» ساخته، و در کارنامه زنده سنجیده می‌شود."""
     from backtest_2min import signals   # همان کدی که آزمایش شده
     from forecast_models import hour_factors, two_min_sigma, two_min_sigma_hour
     now = pd.Timestamp.now(tz="Asia/Tehran") if now is None else now.tz_convert("Asia/Tehran")
+    fp = lambda x: fa(x, MARKET["digits"])          # قیمت با دقت بازار
     now_utc = now.tz_convert("UTC")
     try:
         score_past(bars)
@@ -791,11 +836,11 @@ def two_min_text(bars, book=None, now=None):
     ok, why = data_health(bars, now_utc)
 
     L = [f"⏱ ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
-         f"آخرین قیمت معامله در والکس: {fa(price)} تتر", "",
+         f"آخرین قیمت در {MARKET['name']}: {fp(price)} {MARKET['unit']}", "",
          "تا ۲ دقیقه دیگر:",
-         f"• با احتمال ۸۰٪ بین {fa(lo80)} و {fa(hi80)}",
-         f"• با احتمال ۹۵٪ بین {fa(lo95)} و {fa(hi95)}"]
-    L.append("(این احتمال‌ها از خطاهای واقعی خود ربات روی والکس ساخته شده‌اند.)" if source == "wallex" else
+         f"• با احتمال ۸۰٪ بین {fp(lo80)} و {fp(hi80)}",
+         f"• با احتمال ۹۵٪ بین {fp(lo95)} و {fp(hi95)}"]
+    L.append(f"(این احتمال‌ها از خطاهای واقعی خود ربات روی {MARKET['name']} ساخته شده‌اند.)" if source == "own" else
              "(این احتمال‌ها از رفتار واقعی قیمت جهانی طلا ساخته شده‌اند، نه از فرمول.)")
     if not ok:
         L += ["", f"⚠️ {why} این بازه را با احتیاط ببینید."]
@@ -808,8 +853,9 @@ def two_min_text(bars, book=None, now=None):
         need = cost * price
         chance = float(np.mean(absz > np.log(1 + cost) / sigma)) / 2 if sigma > 0 else 0.0
         chance_fa = "کمتر از ۱ در هزار" if chance < 0.001 else f"حدود {fa(chance * 100, 1)}٪"
-        cost_line = ["", f"💰 اگر الان بخرید ({fa(book['ask'])}) و ۲ دقیقه بعد بفروشید، "
-                         f"قیمت باید حداقل {fa(need)} تتر بالا برود تا فقط ضرر نکنید (کارمزد + فاصله خرید و فروش).",
+        cost_line = ["", f"💰 اگر الان بخرید ({fp(book['ask'])}) و ۲ دقیقه بعد بفروشید، "
+                         f"قیمت باید حداقل {fa(need, 2)} {MARKET['unit']} بالا برود تا فقط ضرر نکنید "
+                         "(کارمزد + فاصله خرید و فروش).",
                      f"شانس این‌قدر بالا رفتن در ۲ دقیقه: {chance_fa}."]
     L += cost_line
 
@@ -836,7 +882,7 @@ def two_min_text(bars, book=None, now=None):
         row.update(trial_low_80=round(tlo, 2), trial_high_80=round(thi, 2),
                    trial_low_95=round(tlo95, 2), trial_high_95=round(thi95, 2), hour_factor=round(fac[nxt_hour], 2))
         L += ["", "🧪 آزمایشی — با حساب ساعت روز:",
-              f"با احتمال ۸۰٪ بین {fa(tlo)} و {fa(thi)}"
+              f"با احتمال ۸۰٪ بین {fp(tlo)} و {fp(thi)}"
               + ("؛ الان معمولاً ساعت پرتکانی است." if busy else "."),
               "در آزمایش کمی بهتر بود ولی نه آن‌قدر که مطمئن باشیم."]
     except Exception as e:
@@ -845,7 +891,7 @@ def two_min_text(bars, book=None, now=None):
     # کارنامه زنده روی والکس
     sc = scores[scores.data_ok.astype(bool)] if len(scores) else scores
     if len(sc) >= TWO_MIN_SCORECARD_MIN:
-        line = (f"📋 کارنامه روی والکس: از {fa(len(sc))} پیش‌بینی قبلی، "
+        line = (f"📋 کارنامه روی {MARKET['name']}: از {fa(len(sc))} پیش‌بینی قبلی، "
                 f"{fa(sc.in_80.astype(bool).mean() * 100)}٪ داخل بازه ۸۰٪ بود "
                 f"و {fa(sc.in_95.astype(bool).mean() * 100)}٪ داخل بازه ۹۵٪")
         tr = sc.trial_in_80.dropna() if "trial_in_80" in sc else []
@@ -853,13 +899,51 @@ def two_min_text(bars, book=None, now=None):
             line += f" (روش آزمایشی: {fa(tr.astype(bool).mean() * 100)}٪ داخل ۸۰٪)"
         L += ["", line + "."]
     else:
-        L += ["", f"📋 کارنامه روی والکس: هنوز {fa(len(sc))} پیش‌بینی سنجیده شده؛ "
+        L += ["", f"📋 کارنامه روی {MARKET['name']}: هنوز {fa(len(sc))} پیش‌بینی سنجیده شده؛ "
                   f"از {fa(TWO_MIN_SCORECARD_MIN)} به بعد درصد درستی این‌جا می‌آید."]
 
+    if ai:
+        L += two_min_ai(price, (lo80, hi80), (lo95, hi95), row, "\n".join(L), sc)
+
     row.update({INDICATOR_LOG[m]: v for m, v in votes.items()})
-    pd.DataFrame([row]).to_csv(TWO_MIN_LOG_PATH, mode="a", header=not os.path.exists(TWO_MIN_LOG_PATH),
-                               index=False)
+    append_csv(TWO_MIN_LOG_PATH, [row])
     return "\n".join(L)
+
+
+def two_min_ai(price, band80, band95, row, report, sc):
+    """بخش هوش مصنوعی پیش‌بینی ۲ دقیقه: بازه با اثر اخبار (قانون ثابت news_ai.ADJUST)، ثبت در row برای سنجش،
+    و کارنامه زنده خودش. اگر کلید نباشد [] و اگر جواب نیاید پیام کوتاه."""
+    try:
+        import news_ai
+        if not news_ai.configured():
+            return []
+        view = news_ai.advise("2min", report, price)
+        if view is None:
+            return news_ai.UNAVAILABLE
+        alo80, ahi80 = news_ai.adjust(price, *band80, view)
+        alo95, ahi95 = news_ai.adjust(price, *band95, view)
+        row.update(ai_tone=view["tone"], ai_confidence=view["confidence"], ai_risk=view["risk"],
+                   ai_low_80=round(alo80, 2), ai_high_80=round(ahi80, 2),
+                   ai_low_95=round(alo95, 2), ai_high_95=round(ahi95, 2))
+        fp = lambda x: fa(x, MARKET["digits"])
+        L = news_ai.head_lines(view, fa) + [f"با اثر اخبار، با احتمال ۸۰٪ بین {fp(alo80)} و {fp(ahi80)}"]
+        L += news_ai.tail_lines(view)
+        ai80 = sc.ai_in_80.dropna() if "ai_in_80" in sc else []
+        if len(ai80) >= TWO_MIN_SCORECARD_MIN:
+            base80 = sc.loc[ai80.index, "in_80"].astype(bool).mean() * 100
+            L.append(f"📋 کارنامه هوش مصنوعی: در {fa(len(ai80))} بار، بازه‌اش {fa(ai80.astype(bool).mean() * 100)}٪ "
+                     f"درست بود (بازه خود ربات در همان دفعه‌ها {fa(base80)}٪).")
+            hit = sc.ai_dir_hit.dropna() if "ai_dir_hit" in sc else []
+            if len(hit) >= TWO_MIN_SCORECARD_MIN:
+                L.append(f"وقتی لحن اخبار جهت داشت، {fa(hit.astype(bool).mean() * 100)}٪ مواقع جهت ۲ دقیقه بعد "
+                         f"را درست گفت (شیر یا خط = ۵۰٪؛ {fa(len(hit))} بار).")
+        else:
+            L.append(f"📋 کارنامه هوش مصنوعی: هنوز {fa(len(ai80))} بار سنجیده شده؛ "
+                     f"از {fa(TWO_MIN_SCORECARD_MIN)} بار به بعد درصد درستی‌اش این‌جا می‌آید.")
+        return L
+    except Exception as e:
+        print(f" 2-minute AI skipped: {e}")
+        return []
 
 
 def write_report(answers, f, opinion):

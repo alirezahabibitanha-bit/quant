@@ -19,7 +19,7 @@ Wants=network-online.target
 [Service]
 User=root
 WorkingDirectory=/root/quant
-ExecStart=/usr/bin/python3 /root/quant/mt_bridge.py 8787
+ExecStart=/usr/bin/python3 /root/quant/mt_bridge.py 8787 127.0.0.1
 Environment=HOME=/root
 Environment=PYTHONUNBUFFERED=1
 Restart=always

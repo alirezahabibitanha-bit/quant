@@ -18,9 +18,16 @@ bale_bot.py - مشاور طلا و تتر روی پیام‌رسان «بله»
   فایل‌های تلگرام جدا هستند: ~/.telegram_token، ~/.telegram_allowed، ~/.telegram_denied
   و فایل‌های وضعیت با پیشوند tg_ (مثلاً tg_answers.json). پس هر دو ربات می‌توانند روی یک سرور کنار هم باشند.
 
+متاتریدر (سرور آلمان):
+  با «--metatrader» همه قیمت‌ها (۲ دقیقه، روزانه، قیمت لحظه‌ای) از متاتریدر (mt_bridge.py) خوانده می‌شود، نه والکس.
+
+هوش مصنوعی:
+  اگر ~/.gemini_key باشد، هر درخواست «پیش‌بینی ۲ دقیقه»، «پیش‌بینی حدودی»، «گزارش» و «سیگنال امروز»
+  یک بار از جیمینای نظر می‌گیرد و زیر گزارش ربات با برچسب آزمایشی می‌گذارد (news_ai.py).
+
 اجرا:
-  python3 bale_bot.py                 # بله، برای امتحان
-  python3 bale_bot.py --telegram      # تلگرام، برای امتحان
+  python3 bale_bot.py                              # بله، برای امتحان
+  python3 bale_bot.py --telegram --metatrader      # سرور آلمان
   دائمی: با فایل bale-bot.service یا telegram-bot.service (راهنما داخل همان فایل‌ها)
 """
 import json
@@ -33,6 +40,7 @@ import requests
 
 import advisor
 import mt_bridge
+import news_ai
 
 TOKEN_PATH = os.path.expanduser("~/.bale_token")
 ALLOWED_PATH = os.path.expanduser("~/.bale_allowed")
@@ -44,6 +52,7 @@ SIGNAL_LOG_PATH = "signal_changes.csv"    # هر تغییر سیگنال با ت
 SIGNAL_CHECK_SECONDS = 6 * 3600      # هر ۶ ساعت سیگنال‌ها چک شوند
 API = "https://tapi.bale.ai/bot{token}/{method}"
 PLATFORM = "Bale"
+MAX_TEXT = 3900                      # سقف طول هر پیام در تلگرام ۴۰۹۶ نویسه است
 DAILY_CACHE_SECONDS = 3600           # قیمت‌های روزانه هر یک ساعت یک بار تازه شوند
 
 BTN_REPORT = "گزارش با جواب‌های قبلی"
@@ -183,6 +192,14 @@ class Bale:
 
     def send(self, chat_id, text, buttons=None, inline=None, cols=1):
         """buttons = دکمه‌های پایین صفحه؛ inline = دکمه‌های زیر خود پیام [(متن، داده)، ...]"""
+        while len(text) > MAX_TEXT:     # پیام خیلی بلند: تکه‌های جلویی جدا فرستاده می‌شوند، دکمه‌ها با تکه آخر
+            cut = text.rfind("\n", 0, MAX_TEXT)
+            cut = cut if cut > 0 else MAX_TEXT
+            try:
+                self.call("sendMessage", {"chat_id": chat_id, "text": text[:cut]})
+            except Exception as e:
+                print(f" Could not send message: {e}")
+            text = text[cut:].lstrip("\n")
         params = {"chat_id": chat_id, "text": text}
         if inline:
             params["reply_markup"] = {"inline_keyboard": [[{"text": t, "callback_data": d}
@@ -240,6 +257,10 @@ class Advisor:
             self.daily_at = time.time()
         return self.daily
 
+    @staticmethod
+    def ai_wait():
+        return " و نظر هوش مصنوعی" if news_ai.configured() else ""
+
     def signals(self):
         """(سیگنال و خط تصمیم هر روش، قیمت فعلی یا None)"""
         return advisor.signal_levels(self.daily_prices()), self.market_price()
@@ -250,8 +271,10 @@ class Advisor:
         facts = advisor.compute_facts(answers, daily, book)
         opinion = advisor.algorithm_opinion(answers, facts)
         advisor.write_log(answers, facts, opinion)
-        return (advisor.short_text(answers, facts, opinion),
-                plain(advisor.report_text(answers, facts, opinion)))
+        short = advisor.short_text(answers, facts, opinion)
+        full = plain(advisor.report_text(answers, facts, opinion))
+        ai = news_ai.text_section("report", full, advisor.fa, facts["mid"])
+        return short + ("\n" + "\n".join(ai) if ai else ""), full
 
     @staticmethod
     def market_price():
@@ -262,7 +285,7 @@ class Advisor:
 
 Q_USDT = "۱) چند تتر (USDT) دارید؟\nهر ۱ تتر تقریباً ۱ دلار است. فقط عدد بنویسید، مثلاً ۲۵۰"
 Q_XAUT = ("۲) چقدر طلا دارید؟\n"
-          "به واحد XAUT، همان عددی که در کیف پول والکس می‌بینید.\n"
+          "به واحد XAUT، همان عددی که در کیف پولتان می‌بینید.\n"
           "هر ۱ XAUT = ۱ اونس ≈ ۳۱٫۱ گرم طلا. مثلاً ۰٫۰۵\n"
           "اگر طلا ندارید ۰ بنویسید.")
 
@@ -289,33 +312,38 @@ class Conversation:
         self.bot.send(chat_id, text, buttons, cols=2)
 
     def send_forecast(self, chat_id):
-        self.bot.send(chat_id, "در حال گرفتن قیمت‌ها از والکس... (تا ۳۰ ثانیه)")
+        self.bot.send(chat_id, f"در حال گرفتن قیمت‌ها{self.adv.ai_wait()}... (تا یک دقیقه)")
         try:
-            text = advisor.forecast_text(self.adv.daily_prices(), self.adv.market_price())
+            text = advisor.forecast_text(self.adv.daily_prices(), self.adv.market_price(), ai=True)
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" Forecast failed: {e}")
-            self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
+            self.main_menu(chat_id, f"گرفتن داده از {advisor.MARKET['name']} نشد. چند دقیقه بعد دوباره امتحان کنید.")
             return
         self.main_menu(chat_id, text)
 
     def send_2min(self, chat_id):
+        if news_ai.configured():
+            self.bot.send(chat_id, "در حال حساب کردن و گرفتن نظر هوش مصنوعی... (تا ۳۰ ثانیه)")
         try:
-            text = advisor.two_min_text(advisor.fetch_minutes(), advisor.fetch_book())
+            text = advisor.two_min_text(advisor.fetch_minutes(), advisor.fetch_book(), ai=True)
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" 2-minute forecast failed: {e}")
-            self.main_menu(chat_id, "گرفتن قیمت دقیقه‌ای از والکس نشد. کمی بعد دوباره امتحان کنید.")
+            self.main_menu(chat_id, f"گرفتن قیمت دقیقه‌ای از {advisor.MARKET['name']} نشد. "
+                                    "کمی بعد دوباره امتحان کنید.")
             return
         self.main_menu(chat_id, text)
 
     def send_signal(self, chat_id):
-        self.bot.send(chat_id, "در حال گرفتن قیمت‌ها از والکس... (تا ۳۰ ثانیه)")
+        self.bot.send(chat_id, f"در حال گرفتن قیمت‌ها{self.adv.ai_wait()}... (تا یک دقیقه)")
         try:
             levels, price = self.adv.signals()
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" Signal failed: {e}")
-            self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
+            self.main_menu(chat_id, f"گرفتن داده از {advisor.MARKET['name']} نشد. چند دقیقه بعد دوباره امتحان کنید.")
             return
-        self.main_menu(chat_id, advisor.signal_text(levels, price))
+        text = advisor.signal_text(levels, price)
+        ai = news_ai.text_section("signal", text, advisor.fa, price)
+        self.main_menu(chat_id, text + ("\n" + "\n".join(ai) if ai else ""))
 
     def start_questions(self, chat_id):
         self.answers[chat_id] = {}
@@ -341,12 +369,12 @@ class Conversation:
         self.send_report(chat_id, answers)
 
     def send_report(self, chat_id, answers):
-        self.bot.send(chat_id, "در حال گرفتن قیمت زنده از والکس... (تا ۳۰ ثانیه)")
+        self.bot.send(chat_id, f"در حال گرفتن قیمت زنده{self.adv.ai_wait()}... (تا یک دقیقه)")
         try:
             short, full = self.adv.report(answers)
         except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
             print(f" Report failed: {e}")
-            self.main_menu(chat_id, "گرفتن داده از والکس نشد. چند دقیقه بعد دوباره امتحان کنید.")
+            self.main_menu(chat_id, f"گرفتن داده از {advisor.MARKET['name']} نشد. چند دقیقه بعد دوباره امتحان کنید.")
             return
         self.details[chat_id] = full
         self.main_menu(chat_id, short)
@@ -514,6 +542,11 @@ def check_signal_change(bot, adv):
 def main():
     if "--telegram" in sys.argv[1:]:
         use_telegram()
+    if "--metatrader" in sys.argv[1:]:
+        advisor.use_metatrader()
+        print(" Prices come from MetaTrader (mt_bridge.py), not Wallex.")
+    print(" AI advice: " + (f"on ({news_ai.model_name()})" if news_ai.configured() else
+                            f"off (no {news_ai.KEY_PATH})"))
     token = read_file(TOKEN_PATH)
     if not token:
         raise SystemExit(f"Bot token not found. Put it in {TOKEN_PATH} (one line).")
