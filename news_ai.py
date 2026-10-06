@@ -46,7 +46,7 @@ KEY_PATH = os.path.expanduser("~/.gemini_key")
 BASE_URL_PATH = os.path.expanduser("~/.gemini_base_url")
 MODEL_PATH = os.path.expanduser("~/.gemini_model")
 DEFAULT_BASE = "https://generativelanguage.googleapis.com"
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"     # 2.5-flash برای کاربران تازه بسته شد (مهر ۱۴۰۵، خطای 404)
 AI_LOG_PATH = "ai_log.csv"                         # هر جواب جیمینای
 NEWS_FORECAST_LOG_PATH = "news_forecast_log.csv"   # هر بازه «با اثر اخبار» پیش‌بینی حدودی
 REUSE_SECONDS = 30            # دو بار زدن پشت سر هم یک دکمه = همان جواب (هزینه دوبار نشود)
@@ -161,7 +161,7 @@ def ask_gemini(prompt, timeout=60, use_search=True):
     except ValueError:
         raise RuntimeError(f"Gemini HTTP {r.status_code}: not JSON") from None
     if r.status_code != 200:
-        raise RuntimeError(f"Gemini HTTP {r.status_code}: {(d.get('error') or {}).get('message', '')[:200]}")
+        raise RuntimeError(f"Gemini HTTP {r.status_code}: {(d.get('error') or {}).get('message', '')[:400]}")
     parts = (((d.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
     text = "".join(p.get("text", "") for p in parts).strip()
     if not text:
