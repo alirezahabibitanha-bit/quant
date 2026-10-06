@@ -130,7 +130,11 @@ if ! command -v wine >/dev/null; then
     wget -q -O "/etc/apt/sources.list.d/winehq-$VERSION_CODENAME.sources" \
         "https://dl.winehq.org/wine-builds/ubuntu/dists/$VERSION_CODENAME/winehq-$VERSION_CODENAME.sources"
     apt-get update -q
-    apt-get install -y -q --install-recommends winehq-stable
+    # Wine 10.0 ثابت: از 10.3 به بعد نصب‌کننده متاتریدر خطای «A debugger has been found» می‌دهد (روی سرور واقعی دیده شد)
+    WV=$(apt-cache madison winehq-stable | awk '{print $3}' | grep '^10\.0' | head -1)
+    apt-get install -y -q --install-recommends --allow-downgrades \
+        winehq-stable="$WV" wine-stable="$WV" wine-stable-amd64="$WV" wine-stable-i386:i386="$WV"
+    apt-mark hold winehq-stable wine-stable wine-stable-amd64 wine-stable-i386:i386 >/dev/null
 fi
 # xorgxrdp و Xorg صریح: روی بعضی سرورها «بسته‌های پیشنهادی» نصب نمی‌شوند و بدون اینها Remote Desktop فقط صفحه آبی نشان می‌دهد
 apt-get install -y -q xfce4 xfce4-terminal dbus-x11 xrdp xorgxrdp xserver-xorg-core xvfb
