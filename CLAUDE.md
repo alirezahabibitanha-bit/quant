@@ -71,7 +71,9 @@
     قیمت روزانه (۶۰۰ روز) را با امضای sha256(رمز+زمان+متن+رمز) به mt_bridge.py (127.0.0.1:8787، mt-bridge.service)
     می‌فرستد؛ رمز ~/.mt_bridge_secret. ذخیره: mt_tick.json، mt_bars.csv (UTC)، mt_daily.csv. دکمه «📈 قیمت متاتریدر».
     متاتریدر با Wine زیر کاربر trader؛ نصب اول با Remote Desktop (xrdp، فقط از تونل SSH، درگاه محلی 33389) و
-    germany/mt5_install.sh؛ بعد mt5.service با xvfb بدون صفحه. اکسپرت هنوز در MetaEditor کامپایل نشده؛ Wine/MT5 تست نشده.
+    germany/mt5_install.sh؛ بعد mt5.service با xvfb بدون صفحه. روی سرور واقعی (185.204.169.110) نصب MT5 کار کرد با: Wine 10.0 ثابت (apt-mark hold؛ 10.3+ خطای
+    «A debugger has been found» می‌دهد) و xorgxrdp صریح (بدونش Remote Desktop صفحه آبی). Remote Desktop از Port forward
+    خود VS Code (3389) با رزولوشن کوچک (کادر ورود در صفحه بزرگ دیده نمی‌شد). اکسپرت هنوز کامپایل/تست نشده.
   - هوش مصنوعی (news_ai.py): هر درخواست ۲ دقیقه / پیش‌بینی حدودی / گزارش / سیگنال **یک بار** جیمینای (با جستجوی گوگل) را
     صدا می‌زند؛ گزارش خود ربات + خلاصه نتایج تست‌ها (EVIDENCE) در درخواست است. جواب: tone ‎-2..2، confidence، risk،
     events، summary_fa، suggestion_fa (پیشنهاد جمع‌بندی‌شده). بخش «🤖 جمع‌بندی با هوش مصنوعی (آزمایشی)» زیر گزارش ربات.
