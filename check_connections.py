@@ -5,14 +5,15 @@ check_connections.py - بررسی این‌که سرور به همه جاهای 
 
 روی سرور اجرا کنید:
   python3 ~/quant/check_connections.py          # همه چیز
-  python3 ~/quant/check_connections.py --wallex # والکس را هم بررسی کن
+  python3 ~/quant/check_connections.py --wallex # والکس را حتماً بررسی کن
+  python3 ~/quant/check_connections.py --global # قیمت جهانی طلا را حتماً بررسی کن
   python3 ~/quant/check_connections.py --news   # همراه با یک تحلیل کامل اخبار با جیمینای (کمی طول می‌کشد)
 
 برای هر مورد OK یا FAIL و دلیلش را چاپ می‌کند (انگلیسی، چون ترمینال فارسی را درست نشان نمی‌دهد):
   Telegram  - ربات تلگرام (با ~/.telegram_token اگر باشد)
   Bale      - ربات بله (فقط اگر ~/.bale_token باشد)
-  Gold USD  - قیمت جهانی طلا به دلار (اگر ~/.bale_token باشد، یا ربات تلگرام بدون متاتریدر)
-  Wallex    - داده والکس (فقط با --wallex؛ ربات بله دیگر از والکس نمی‌خواند)
+  Gold USD  - قیمت جهانی طلا به دلار (ربات تلگرام بدون متاتریدر، یا با --global)
+  Wallex    - داده والکس (اگر ~/.bale_token باشد، چون ربات بله از والکس می‌خواند؛ یا با --wallex)
   Gemini    - جیمینای (با ~/.gemini_key)
   MetaTrader- گیرنده mt_bridge.py، آخرین قیمت، و داده روزانه (فقط اگر با setup.sh --metatrader نصب شده)
   MT5       - برنامه متاتریدر روی همین سرور (سرویس mt5؛ همین‌طور)
@@ -164,11 +165,12 @@ def main():
     print("== Checking connections from this server...")
     # فقط «setup.sh --metatrader» این فایل را می‌گذارد؛ بدون آن، ربات تلگرام هم قیمت را از بازار جهانی می‌گیرد
     mt = os.path.exists(MT_DROPIN)
-    use_global = read("~/.bale_token") or not mt
+    use_global = (read("~/.telegram_token") and not mt) or "--global" in sys.argv[1:]
+    use_wallex = read("~/.bale_token") or "--wallex" in sys.argv[1:]
     results = [check_bot("Telegram", "https://api.telegram.org/bot{token}/{method}", "~/.telegram_token", True),
                check_bot("Bale", "https://tapi.bale.ai/bot{token}/{method}", "~/.bale_token", False),
                check_global() if use_global else None,
-               check_wallex() if "--wallex" in sys.argv[1:] else None,
+               check_wallex() if use_wallex else None,
                check_gemini("--news" in sys.argv[1:]), check_mt() if mt else None, check_mt5_service() if mt else None]
     bad = sum(r is False for r in results)
     print("== All good." if not bad else f"== {bad} problem(s). See the lines marked FAIL.")
