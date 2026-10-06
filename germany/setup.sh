@@ -132,7 +132,8 @@ if ! command -v wine >/dev/null; then
     apt-get update -q
     apt-get install -y -q --install-recommends winehq-stable
 fi
-apt-get install -y -q xfce4 xfce4-terminal dbus-x11 xrdp xvfb
+# xorgxrdp و Xorg صریح: روی بعضی سرورها «بسته‌های پیشنهادی» نصب نمی‌شوند و بدون اینها Remote Desktop فقط صفحه آبی نشان می‌دهد
+apt-get install -y -q xfce4 xfce4-terminal dbus-x11 xrdp xorgxrdp xserver-xorg-core xvfb
 adduser --quiet xrdp ssl-cert 2>/dev/null || true
 if ! id "$TRADER" >/dev/null 2>&1; then
     adduser --quiet --disabled-password --gecos "" "$TRADER"
