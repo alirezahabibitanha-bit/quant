@@ -48,6 +48,7 @@ import requests
 import advisor
 import mt_bridge
 import news_ai
+import server_status
 
 TOKEN_PATH = os.path.expanduser("~/.bale_token")
 ALLOWED_PATH = os.path.expanduser("~/.bale_allowed")
@@ -69,6 +70,7 @@ BTN_SIGNAL = "📡 سیگنال امروز"
 BTN_FORECAST = "🔮 پیش‌بینی حدودی"
 BTN_2MIN = "⏱ پیش‌بینی ۲ دقیقه"
 BTN_MT = "📈 قیمت متاتریدر"
+BTN_SERVER = "🖥 وضعیت سرور"
 BTN_ALERT_ON = "🔔 خبرم کن وقتی سیگنال عوض شد"
 BTN_ALERT_OFF = "🔕 دیگر خبرم نکن"
 BTN_CANCEL = "لغو"
@@ -117,6 +119,11 @@ def read_ids(path):
 
 def read_allowed():
     return read_ids(ALLOWED_PATH)
+
+
+def is_owner(chat_id):
+    allowed = read_allowed()
+    return bool(allowed) and allowed[0] == str(chat_id)
 
 
 def add_id(path, chat_id, note=""):
@@ -340,6 +347,8 @@ class Conversation:
         if advisor.MARKET["name"] == "متاتریدر" and mt_bridge.has_data():
             buttons.append(BTN_MT)
         buttons.append(BTN_ALERT_OFF if is_subscribed(chat_id) else BTN_ALERT_ON)
+        if is_owner(chat_id):
+            buttons.append(BTN_SERVER)
         self.bot.send(chat_id, text, buttons, cols=2)
 
     def send_forecast(self, chat_id):
@@ -423,6 +432,10 @@ class Conversation:
         text = (text or "").strip()
         step = self.step.get(chat_id)
 
+        if text == BTN_SERVER and is_owner(chat_id):
+            self.step.pop(chat_id, None)
+            self.main_menu(chat_id, server_status.status_text())
+            return
         if text == BTN_MT:
             self.step.pop(chat_id, None)
             self.main_menu(chat_id, mt_bridge.status_text())
@@ -609,6 +622,10 @@ def main():
     else:
         print(f" WARNING: {ALLOWED_PATH} not found. The bot will only tell people their chat id.")
     conv = Conversation(bot, Advisor())
+    watcher = server_status.Watcher()
+    text = watcher.startup_text()
+    if text and allowed:
+        bot.send(allowed[0], text)
     told = set()        # غریبه‌هایی که یک بار جوابشان داده شده (برای جلوگیری از پیام تکراری)
 
     offset = None
@@ -620,6 +637,15 @@ def main():
                 check_signal_change(bot, conv.adv)
             except (Exception, SystemExit) as e:   # SystemExit هم از advisor می‌آید
                 print(f" Signal check failed: {e}")
+        if watcher.due():
+            try:
+                owner = (read_allowed() or [None])[0]
+                for text in watcher.check():
+                    print(f" Server alert: {text.splitlines()[0]}")
+                    if owner:
+                        bot.send(owner, text)
+            except Exception as e:
+                print(f" Server check failed: {e}")
         try:
             params = {"timeout": 30}
             if offset is not None:

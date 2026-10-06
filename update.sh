@@ -45,7 +45,7 @@ if ! git merge --quiet --ff-only '@{u}'; then
 fi
 
 echo "== Checking the code..."
-if ! python3 -m py_compile advisor.py bale_bot.py news_ai.py mt_bridge.py global_gold.py; then
+if ! python3 -m py_compile advisor.py bale_bot.py news_ai.py mt_bridge.py global_gold.py server_status.py; then
     echo "!! The new code has an error. Going back to the previous version."
     git reset --quiet --hard "$OLD"
     exit 1
