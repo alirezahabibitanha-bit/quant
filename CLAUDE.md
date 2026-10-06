@@ -56,6 +56,10 @@
   (x86_64، ۲ هسته، رم ۲ گیگ — کاربر این را خریده/می‌خرد — ۴۰ گیگ، Ubuntu 24.04، IPv4).
     با رم کمتر از ۳٫۵ گیگ setup.sh Swap چهار گیگی و swappiness=10 می‌گذارد؛ OOMScoreAdjust: ربات و گیرنده ‎-500، mt5 ‎+500
     (اول متاتریدر بسته شود، خودش دوباره روشن می‌شود). نکته‌های کم کردن رم متاتریدر در README قدم ۶.
+  - **ساده‌سازی (مهر ۱۴۰۵):** پیش‌فرض بدون متاتریدر: telegram-bot.service با «--telegram --global» (قیمت جهانی مثل بله،
+    از آلمان مستقیم). نصب = ۳ قدم (setup.sh، کلید جیمینای، توکن تلگرام). متاتریدر فقط با «setup.sh --metatrader» که یک
+    drop-in (/etc/systemd/system/telegram-bot.service.d/metatrader.conf) می‌گذارد و ماندگار است. check_connections بدون آن
+    drop-in متاتریدر را چک نمی‌کند و Gold USD را چک می‌کند. قانون: تا یکی دو هفته استفاده، چیز تازه اضافه نشود.
   - تلگرام: همان bale_bot.py با «--telegram --metatrader» (telegram-bot.service). فایل‌ها جدا: ~/.telegram_token،
     ~/.telegram_allowed، ~/.telegram_denied، وضعیت با پیشوند tg_. پیام‌های بلندتر از ۳۹۰۰ نویسه تکه‌تکه فرستاده می‌شوند.
   - داده: advisor.use_metatrader() توابع fetch_daily / fetch_book / fetch_minutes را با mt_bridge عوض می‌کند و
