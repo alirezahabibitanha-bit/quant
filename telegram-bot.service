@@ -16,17 +16,21 @@
 #   روشن کردن دوباره (بعد از عوض کردن کد):   systemctl restart telegram-bot
 #   خاموش کردن:     systemctl stop telegram-bot
 #
+# قیمت‌ها از بازار جهانی (--global، مثل ربات بله؛ بدون متاتریدر).
+# «bash setup.sh --metatrader» با یک فایل کمکی (telegram-bot.service.d/metatrader.conf) این را به
+# «--telegram --metatrader» عوض می‌کند؛ آن فایل با update.sh پاک نمی‌شود.
+#
 # اگر پوشه پروژه جای دیگری است، /root/quant را در دو خط پایین عوض کنید.
 
 [Unit]
-Description=Telegram bot for the personal gold/USDT advisor
+Description=Telegram bot for the personal gold/USD advisor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=root
 WorkingDirectory=/root/quant
-ExecStart=/usr/bin/python3 /root/quant/bale_bot.py --telegram --metatrader
+ExecStart=/usr/bin/python3 /root/quant/bale_bot.py --telegram --global
 Environment=HOME=/root
 Environment=PYTHONUNBUFFERED=1
 Restart=always

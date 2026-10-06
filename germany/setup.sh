@@ -1,14 +1,17 @@
 #!/bin/bash
-# setup.sh - آماده کردن سرور آلمان: ربات تلگرام + جیمینای + متاتریدر ۵ روی همین سرور
+# setup.sh - آماده کردن سرور آلمان: ربات تلگرام + جیمینای (+ متاتریدر ۵، اختیاری)
 #
-# روی یک سرور تازه Ubuntu 24.04 (یا 22.04)، x86_64، با کاربر root:
-#   bash setup.sh
+# روی یک سرور تازه Ubuntu 24.04 (یا 22.04)، با کاربر root:
+#   bash setup.sh                 # ساده: قیمت از بازار جهانی (مثل ربات بله)، بدون متاتریدر
+#   bash setup.sh --metatrader    # کامل: متاتریدر با Wine و Remote Desktop (x86_64، ۲ گیگ رم)
+# حالت متاتریدر اگر یک بار نصب شود می‌ماند (اجرای بعدی بدون --metatrader آن را برنمی‌دارد).
 # چند بار اجرا کردنش ضرری ندارد؛ کارهای انجام‌شده را دوباره نمی‌کند.
 #
 # کارها به ترتیب:
 #   1. نصب کتابخانه‌های پایتون از apt (همان‌هایی که سرور ایران دارد)
 #   2. Swap: با رم کمتر از ۳٫۵ گیگ، ۴ گیگ؛ وگرنه ۲ گیگ (اگر کمتر باشد)
 #   3. گرفتن کد از GitHub در /root/quant (اگر مخزن خصوصی باشد، یک «کلید فقط‌خواندنی» می‌سازد)
+#   (فقط با --metatrader: قدم‌های ۴ و ۵ و سرویس‌های mt-bridge و mt5)
 #   4. نصب Wine (برای اجرای متاتریدر ویندوزی روی لینوکس) و یک میز کار سبک (XFCE) با «Remote Desktop»
 #      - کاربر جدا به اسم trader برای متاتریدر (رمزش را یک بار می‌پرسد)
 #      - Remote Desktop از اینترنت بسته است؛ فقط از راه تونل رمزشده SSH (راهنما: germany/README.md)
@@ -26,18 +29,28 @@ DIR=/root/quant
 DEPLOY_KEY="$HOME/.ssh/github_quant"
 TRADER=trader
 MT5_EXE="/home/$TRADER/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+MT_DROPIN=/etc/systemd/system/telegram-bot.service.d/metatrader.conf
+
+MT=0
+[ "${1:-}" = "--metatrader" ] && MT=1
+[ -f "$MT_DROPIN" ] && MT=1     # قبلاً با متاتریدر نصب شده
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "!! Run this as root."
     exit 1
 fi
-if [ "$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)" -lt 1800 ]; then
-    echo "!! Less than 2 GB RAM. MetaTrader with Wine needs at least 2 GB."
-    exit 1
-fi
-if [ "$(dpkg --print-architecture)" != "amd64" ]; then
-    echo "!! This server is not x86_64 (amd64). MetaTrader/Wine needs an x86_64 server, not ARM."
-    exit 1
+if [ "$MT" = 1 ]; then
+    echo "== Mode: Telegram bot + MetaTrader"
+    if [ "$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)" -lt 1800 ]; then
+        echo "!! Less than 2 GB RAM. MetaTrader with Wine needs at least 2 GB."
+        exit 1
+    fi
+    if [ "$(dpkg --print-architecture)" != "amd64" ]; then
+        echo "!! This server is not x86_64 (amd64). MetaTrader/Wine needs an x86_64 server, not ARM."
+        exit 1
+    fi
+else
+    echo "== Mode: Telegram bot with global market prices (no MetaTrader)"
 fi
 . /etc/os-release
 
@@ -99,6 +112,16 @@ else
 fi
 cd "$DIR"
 
+for f in .gemini_base_url .proxy_url; do
+    if [ -f "$HOME/$f" ]; then
+        echo "   WARNING: ~/$f exists. It is only for the Iran server."
+        echo "            Here Gemini and gold prices are reached directly. Remove it with:  rm ~/$f"
+    fi
+done
+
+if [ "$MT" = 0 ]; then
+    echo "== 4/8 and 5/8 skipped (MetaTrader not wanted; to add it later: bash setup.sh --metatrader)"
+else
 echo "== 4/8 Wine, light desktop and Remote Desktop (several minutes)..."
 if ! command -v wine >/dev/null; then
     dpkg --add-architecture i386
@@ -129,14 +152,9 @@ chmod 600 "$HOME/.mt_bridge_secret"
 install -o "$TRADER" -g "$TRADER" -m 600 "$HOME/.mt_bridge_secret" "/home/$TRADER/mt_bridge_secret.txt"
 install -o "$TRADER" -g "$TRADER" -m 644 metatrader/PriceBridge.mq5 "/home/$TRADER/PriceBridge.mq5"
 install -o "$TRADER" -g "$TRADER" -m 755 germany/mt5_install.sh "/home/$TRADER/mt5_install.sh"
-for f in .gemini_base_url .proxy_url; do
-    if [ -f "$HOME/$f" ]; then
-        echo "   WARNING: ~/$f exists. It is only for the Iran server."
-        echo "            Here Gemini is reached directly. Remove it with:  rm ~/$f"
-    fi
-done
+fi
 
-echo "== 6/8 Firewall (only SSH open; Remote Desktop and the price receiver are reachable only inside the server)..."
+echo "== 6/8 Firewall (only SSH open)..."
 # همه درگاه‌هایی که SSH رویشان گوش می‌دهد باز می‌مانند (مثلاً اگر برای ایران درگاه 443 هم اضافه شده)،
 # به‌علاوه درگاهی که همین الان با آن وصل هستید؛ تا هیچ‌وقت خودتان را از سرور بیرون نیندازید.
 SSH_PORTS=$( { sshd -T 2>/dev/null | awk '/^port /{print $2}'
@@ -149,10 +167,18 @@ SSH_PORT=$( [ -n "${SSH_CONNECTION:-}" ] && echo "$SSH_CONNECTION" | awk '{print
 echo "   open (SSH): $(echo $SSH_PORTS)"
 
 echo "== 7/8 Services..."
-cp mt-bridge.service telegram-bot.service mt5.service /etc/systemd/system/
+cp telegram-bot.service /etc/systemd/system/
+if [ "$MT" = 1 ]; then
+    cp mt-bridge.service mt5.service /etc/systemd/system/
+    # ربات تلگرام قیمت را از متاتریدر بخواند (فایل کمکی؛ با update.sh پاک نمی‌شود)
+    mkdir -p "$(dirname "$MT_DROPIN")"
+    printf '[Service]\nExecStart=\nExecStart=/usr/bin/python3 %s/bale_bot.py --telegram --metatrader\n' "$DIR" > "$MT_DROPIN"
+fi
 systemctl daemon-reload
-systemctl enable --quiet --now mt-bridge
-systemctl restart mt-bridge
+if [ "$MT" = 1 ]; then
+    systemctl enable --quiet --now mt-bridge
+    systemctl restart mt-bridge
+fi
 if [ -s "$HOME/.telegram_token" ]; then
     systemctl enable --quiet --now telegram-bot
     systemctl restart telegram-bot
@@ -161,7 +187,9 @@ if [ -s "$HOME/.telegram_token" ]; then
 else
     echo "   telegram-bot NOT started yet: put the token in ~/.telegram_token, then run this script again."
 fi
-if [ -f "$MT5_EXE" ]; then
+if [ "$MT" = 0 ]; then
+    :
+elif [ -f "$MT5_EXE" ]; then
     if loginctl list-sessions --no-legend 2>/dev/null | grep -qw "$TRADER"; then
         echo "   mt5 NOT started: $TRADER is logged in with Remote Desktop. Close MetaTrader (File > Exit),"
         echo "   log out of Remote Desktop, then run:  systemctl enable --now mt5"
@@ -177,9 +205,13 @@ sleep 3
 echo "== 8/8 Checking connections..."
 python3 check_connections.py || true
 
-IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')
 echo
 echo "== Done."
+if [ "$MT" = 0 ]; then
+    echo "   Next steps: germany/README.md (Gemini key, Telegram token). Re-run this script after adding the token."
+    exit 0
+fi
+IP=$(curl -4 -s --max-time 5 https://api.ipify.org || hostname -I | awk '{print $1}')
 echo "   Remote Desktop (from your Windows PC, keep this window open):"
 echo "      ssh -L 33389:127.0.0.1:3389 -p $SSH_PORT root@$IP"
 echo "   then open 'Remote Desktop Connection' and connect to:  localhost:33389   (user: $TRADER)"
