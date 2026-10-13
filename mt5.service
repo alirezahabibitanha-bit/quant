@@ -22,11 +22,15 @@ WorkingDirectory=/home/trader
 Environment=HOME=/home/trader
 Environment=WINEPREFIX=/home/trader/.mt5
 Environment=WINEDEBUG=-all
-ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x800x24" /usr/bin/wine "/home/trader/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+# به‌روزرسانی خودکار: متاتریدر خودش را می‌بندد و برنامه به‌روزرسانی را جدا اجرا می‌کند که بعد متاتریدر تازه را باز
+# می‌کند. «wineserver -w» صبر می‌کند تا همه برنامه‌های Wine این پوشه تمام شوند؛ بدونش systemd به‌روزرسانی را
+# نیمه‌کاره می‌کشت و متاتریدر هر ۲ دقیقه دوباره به‌روزرسانی را شروع می‌کرد (۱۳ مهر ۱۴۰۵، ۳ ساعت بدون قیمت).
+ExecStart=/usr/bin/xvfb-run -a -s "-screen 0 1280x800x24" /bin/sh -c 'wine "/home/trader/.mt5/drive_c/Program Files/MetaTrader 5/terminal64.exe"; exec wineserver -w'
 Restart=always
 # اگر رم پر شد: لینوکس اول متاتریدر را می‌بندد؛ بعد از ۳۰ ثانیه خودش دوباره روشن می‌شود
 OOMScoreAdjust=500
 RestartSec=30
+TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target
