@@ -367,8 +367,9 @@ class Conversation:
             if advisor.MARKET["cash_code"] == "USD":
                 self.main_menu(chat_id, global_minutes_note())
                 return
+            why = mt_bridge.minutes_problem() if advisor.MARKET["name"] == "متاتریدر" else None
             self.main_menu(chat_id, f"گرفتن قیمت دقیقه‌ای از {advisor.MARKET['name']} نشد. "
-                                    "کمی بعد دوباره امتحان کنید.")
+                                    + (why or "کمی بعد دوباره امتحان کنید."))
             return
         self.main_menu(chat_id, text)
 

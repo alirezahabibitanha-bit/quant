@@ -127,6 +127,7 @@ def check_gemini(full):
 
 def check_mt():
     import mt_bridge
+    import pandas as pd
     if not mt_bridge.read_secret():
         return show("MetaTrader", False, f"no secret in {mt_bridge.SECRET_PATH} (germany/setup.sh --metatrader makes it)")
     try:
@@ -144,6 +145,15 @@ def check_mt():
         show("MT daily", days >= 430, f"{days} days of daily prices (430+ needed for all signals)")
     except (Exception, SystemExit) as e:
         show("MT daily", False, f"{e}")
+    skew = t["tick_utc"] - t["received_at"] if t.get("tick_utc") else 0
+    try:
+        bars = mt_bridge.fetch_minutes()
+        last = (time.time() - pd.Timestamp(bars.time.iloc[-1]).timestamp()) / 60 - 2
+        show("MT minutes", abs(skew) < 1800, f"{len(bars)} two-minute bars in last 4 h, last one {last:.0f} min ago, "
+                                            f"clock difference {skew / 60:+.0f} min")
+    except (Exception, SystemExit) as e:
+        n = len(pd.read_csv(mt_bridge.BARS_PATH)) if os.path.exists(mt_bridge.BARS_PATH) else 0
+        show("MT minutes", False, f"{e} ({n} one-minute bars stored in 3 days, clock difference {skew / 60:+.0f} min)")
     return ok
 
 

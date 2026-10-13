@@ -220,6 +220,35 @@ def fetch_minutes(hours=4):
     return bars.reset_index()
 
 
+def minutes_problem(hours=4):
+    """اگر «پیش‌بینی ۲ دقیقه» داده کافی ندارد، دلیلش به فارسی ساده (برای ربات)؛ اگر مشکلی نیست None.
+    همان شرط‌های fetch_minutes را جدا جدا نگاه می‌کند تا معلوم شود ایراد کجاست."""
+    from advisor import fa
+    t = latest()
+    if t is None or not os.path.exists(BARS_PATH):
+        return "هنوز هیچ قیمتی از متاتریدر به ربات نرسیده (متاتریدر یا اکسپرت PriceBridge روشن نیست)."
+    age = time.time() - t["received_at"]
+    if age >= STALE_SECONDS:
+        return (f"آخرین قیمت از متاتریدر {fa(age / 60)} دقیقه پیش رسیده؛ متاتریدر الان وصل نیست "
+                "(یا بازار بسته است). روی سرور: systemctl status mt5")
+    skew = t["tick_utc"] - t["received_at"] if t.get("tick_utc") else 0
+    if abs(skew) > 30 * 60:
+        return (f"ساعت کندل‌های متاتریدر حدود {fa(skew / 3600, 1)} ساعت با ساعت واقعی فرق دارد؛ "
+                "برای همین کندل‌های ساعت اخیر پیدا نمی‌شوند (اختلاف ساعت کارگزار درست حساب نشده).")
+    df = pd.read_csv(BARS_PATH)
+    if df.empty:
+        return "متاتریدر وصل است ولی هنوز کندل دقیقه‌ای نفرستاده."
+    last = (time.time() - df.time.max()) / 60
+    n = len(set(df.time[df.time >= time.time() - hours * 3600] // 120))
+    if last > 15:
+        return (f"متاتریدر وصل است ولی آخرین کندل دقیقه‌ای {fa(last)} دقیقه پیش است؛ "
+                "احتمالاً بازار بسته است (آخر هفته یا تعطیلی).")
+    if n < 40:
+        return (f"در {fa(hours)} ساعت اخیر فقط {fa(n)} کندل ۲ دقیقه‌ای از متاتریدر رسیده و ۴۰ تا لازم است "
+                "(مثلاً متاتریدر تازه روشن شده یا بازار تازه باز شده). کمی بعد دوباره امتحان کنید.")
+    return None
+
+
 def status_text():
     """پیام کوتاه فارسی برای دکمه «قیمت متاتریدر» در ربات."""
     import advisor
