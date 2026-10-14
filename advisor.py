@@ -871,33 +871,38 @@ def trade_targets(book, amounts=TRADE_AMOUNTS, profit=1.0):
 
 
 def trade_target_lines(book, price=None, sigma=0.0, absz=None):
-    """بخش «بخرید روی… بفروشید روی…» پیام ۲ دقیقه با ۱۰۰/۲۰۰/۳۰۰ دلار؛ فقط بازارهای دلاری (متاتریدر و جهانی).
-    شانس رسیدن به هر عدد تا ۲ دقیقه بعد از همان خطاهای واقعی گذشته (absz) حساب می‌شود که بازه ۲ دقیقه از آن ساخته شده."""
-    if not book or MARKET["unit"] != "دلار":
+    """بخش سریع پیام ۲ دقیقه: «بخر روی… بی‌ضرر روی…» برای خرید و فروش، و در بازار دلاری قیمت ۱ دلار سود با
+    ۱۰۰/۲۰۰/۳۰۰ دلار. کوتاه، چون موقع معامله تمرکز کم است. شانس رسیدن تا ۲ دقیقه از همان خطاهای واقعی بازه."""
+    if not book:
         return []
     fp = lambda x: fa(x, MARKET["digits"])
     price = (book["bid"] + book["ask"]) / 2 if price is None else price
 
     def chance(target):
         if absz is None or sigma <= 0:
-            return ""
-        c = float(np.mean(absz > abs(np.log(target / price)) / sigma)) / 2
-        return " — شانس تا ۲ دقیقه: " + ("تقریباً صفر" if c < 0.001 else f"{fa(c * 100, 1)}٪")
+            return None
+        return float(np.mean(absz > abs(np.log(target / price)) / sigma)) / 2
+
+    def pct(c):
+        return "تقریباً صفر" if c < 0.001 else f"{fa(c * 100)}٪"
 
     rows = trade_targets(book)
-    fee = "صفر" if FEE == 0 else f"{fa(FEE * 100, 3)}٪"
-    L = ["", f"🎯 اگر الان معامله باز کنید (کارمزد هر طرف {fee}؛ مبلغ = کل ارزش معامله، بدون اهرم):",
-         "📈 اگر فکر می‌کنید بالا می‌رود:",
-         f"• الان بخرید روی {fp(book['ask'])}",
-         f"• بفروشید روی {fp(rows[0]['buy_even'])} ← فقط بی‌ضرر (هر مبلغی){chance(rows[0]['buy_even'])}"]
-    L += [f"• با {fa(r['amount'])} دلار، برای ۱ دلار سود بفروشید روی {fp(r['buy_profit'])}{chance(r['buy_profit'])}"
-          for r in rows]
-    L += ["📉 اگر فکر می‌کنید پایین می‌آید:",
-          f"• الان بفروشید روی {fp(book['bid'])}",
-          f"• دوباره بخرید (ببندید) روی {fp(rows[0]['sell_even'])} ← فقط بی‌ضرر{chance(rows[0]['sell_even'])}"]
-    L += [f"• با {fa(r['amount'])} دلار، برای ۱ دلار سود ببندید روی {fp(r['sell_profit'])}{chance(r['sell_profit'])}"
-          for r in rows]
-    L.append("یادتان باشد: جهت ۲ دقیقه را هیچ روشی بهتر از شیر یا خط نگفته؛ این عددها فقط می‌گویند کجا سود شروع می‌شود.")
+    dollars = MARKET["unit"] == "دلار"
+    L = []
+    for icon, title, open_word, open_px, even_key, profit_key in (
+            ("📈", "اگر فکر می‌کنید بالا می‌رود:", "بخر", book["ask"], "buy_even", "buy_profit"),
+            ("📉", "اگر فکر می‌کنید پایین می‌آید:", "بفروش", book["bid"], "sell_even", "sell_profit")):
+        even = rows[0][even_key]
+        c = chance(even)
+        L += ["", f"{icon} {title}",
+              f"{open_word}: {fp(open_px)}",
+              f"بی‌ضرر: {fp(even)}" + ("" if c is None else f" (شانس {pct(c)})")]
+        if dollars:
+            L.append("۱ دلار سود:")
+            L += [f"• {fa(r['amount'])} دلار ← {fp(r[profit_key])}" for r in rows]
+            cs = [chance(r[profit_key]) for r in rows]
+            if cs[-1] is not None and max(cs) < 0.01:
+                L.append("(در ۲ دقیقه تقریباً نمی‌رسد)")
     return L
 
 
@@ -921,38 +926,31 @@ def two_min_text(bars, book=None, now=None, ai=False):
     (lo80, hi80), (lo95, hi95) = band(q80), band(q95)
     ok, why = data_health(bars, now_utc)
 
-    L = [f"⏱ ۲ دقیقه بعد — ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')}",
-         f"آخرین قیمت در {MARKET['name']}: {fp(price)} {MARKET['unit']}", "",
-         "تا ۲ دقیقه دیگر:",
-         f"• با احتمال ۸۰٪ بین {fp(lo80)} و {fp(hi80)}",
-         f"• با احتمال ۹۵٪ بین {fp(lo95)} و {fp(hi95)}"]
-    L.append(f"(این احتمال‌ها از خطاهای واقعی خود ربات روی {MARKET['name']} ساخته شده‌اند.)" if source == "own" else
-             "(این احتمال‌ها از رفتار واقعی قیمت جهانی طلا ساخته شده‌اند، نه از فرمول.)")
-    if not ok:
-        L += ["", f"⚠️ {why} این بازه را با احتیاط ببینید."]
-
-    # هزینه: خرید به قیمت فروشنده‌ها، فروش ۲ دقیقه بعد به قیمت خریدارها، هر بار کارمزد
-    cost_line = []
-    if book:
-        mid = (book["bid"] + book["ask"]) / 2
-        cost = (book["ask"] - book["bid"]) / mid + 2 * FEE
-        need = cost * price
-        chance = float(np.mean(absz > np.log(1 + cost) / sigma)) / 2 if sigma > 0 else 0.0
-        chance_fa = "کمتر از ۱ در هزار" if chance < 0.001 else f"حدود {fa(chance * 100, 1)}٪"
-        cost_line = ["", f"💰 اگر الان بخرید ({fp(book['ask'])}) و ۲ دقیقه بعد بفروشید، "
-                         f"قیمت باید حداقل {fa(need, 2)} {MARKET['unit']} بالا برود تا فقط ضرر نکنید "
-                         "(کارمزد + فاصله خرید و فروش).",
-                     f"شانس این‌قدر بالا رفتن در ۲ دقیقه: {chance_fa}."]
-    L += cost_line
-    L += trade_target_lines(book, price, sigma, absz)
-
     last = signals(bars).iloc[-1]
     votes = {m: int(v) for m, v in last.items()}
     up, down = sum(v > 0 for v in votes.values()), sum(v < 0 for v in votes.values())
-    said = (f"{fa(up)} تا از ۵ ابزار تریدرها می‌گویند بالا می‌رود" if up > down else
-            f"{fa(down)} تا از ۵ ابزار تریدرها می‌گویند پایین می‌آید" if down > up else
+
+    # بخش سریع: موقع معامله تمرکز کم است؛ فقط عددهای لازم، یک چیز در هر خط
+    L = []
+    if not ok:
+        L += [f"⚠️ داده مشکل دارد — به عددها تکیه نکنید ({why})", ""]
+    L += [f"⏱ ساعت {fa(now.hour)}:{fa(now.minute).rjust(2, '۰')} | قیمت الان: {fp(price)}"]
+    L += trade_target_lines(book, price, sigma, absz)
+    L += ["", f"🔮 ۲ دقیقه دیگر (۸۰٪): {fp(lo80)} تا {fp(hi80)}",
+          "🎲 بالا یا پایین؟ هیچ روشی نمی‌داند (۵۰/۵۰)"]
+
+    # جزئیات: برای وقتی که عجله ندارید
+    said = (f"{fa(up)} تا از ۵ ابزار تریدرها می‌گویند بالا" if up > down else
+            f"{fa(down)} تا از ۵ ابزار تریدرها می‌گویند پایین" if down > up else
             "ابزارهای تریدرها با هم موافق نیستند")
-    L += ["", f"🎲 {said}؛ ولی روی ۱۷ هزار بار قیمت واقعی فقط نصف دفعه‌ها درست گفتند، مثل شیر یا خط."]
+    fee = "صفر" if FEE == 0 else f"{fa(FEE * 100, 3)}٪"
+    L += ["", "━━━━━━━━━━", "جزئیات (اگر وقت دارید):",
+          f"• بازار: {MARKET['name']}، واحد: {MARKET['unit']}، کارمزد هر طرف: {fee}"
+          + ("؛ مبلغ‌ها = کل ارزش معامله، بدون اهرم" if MARKET["unit"] == "دلار" else ""),
+          f"• ۲ دقیقه دیگر (۹۵٪): {fp(lo95)} تا {fp(hi95)}",
+          f"• این بازه‌ها از خطاهای واقعی خود ربات روی {MARKET['name']} ساخته شده‌اند." if source == "own" else
+          "• این بازه‌ها از رفتار واقعی قیمت جهانی طلا ساخته شده‌اند، نه از فرمول.",
+          f"• {said}؛ در ۱۷ هزار آزمایش نصف دفعه‌ها درست بودند (شیر یا خط)."]
 
     row = {"made_at": now.strftime("%Y-%m-%d %H:%M:%S"),
            "target_utc": (now_utc + pd.Timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S+00:00"),
@@ -968,26 +966,24 @@ def two_min_text(bars, book=None, now=None, ai=False):
         busy = fac[nxt_hour] > 1.2
         row.update(trial_low_80=round(tlo, 2), trial_high_80=round(thi, 2),
                    trial_low_95=round(tlo95, 2), trial_high_95=round(thi95, 2), hour_factor=round(fac[nxt_hour], 2))
-        L += ["", "🧪 آزمایشی — با حساب ساعت روز:",
-              f"با احتمال ۸۰٪ بین {fp(tlo)} و {fp(thi)}"
-              + ("؛ الان معمولاً ساعت پرتکانی است." if busy else "."),
-              "در آزمایش کمی بهتر بود ولی نه آن‌قدر که مطمئن باشیم."]
+        L.append(f"• 🧪 آزمایشی با حساب ساعت روز (۸۰٪): {fp(tlo)} تا {fp(thi)}"
+                 + ("؛ الان معمولاً ساعت پرتکانی است." if busy else ""))
     except Exception as e:
         print(f" 2-minute trial skipped: {e}")
 
     # کارنامه زنده روی والکس
     sc = scores[scores.data_ok.astype(bool)] if len(scores) else scores
     if len(sc) >= TWO_MIN_SCORECARD_MIN:
-        line = (f"📋 کارنامه روی {MARKET['name']}: از {fa(len(sc))} پیش‌بینی قبلی، "
+        line = (f"• 📋 کارنامه روی {MARKET['name']}: از {fa(len(sc))} پیش‌بینی قبلی، "
                 f"{fa(sc.in_80.astype(bool).mean() * 100)}٪ داخل بازه ۸۰٪ بود "
                 f"و {fa(sc.in_95.astype(bool).mean() * 100)}٪ داخل بازه ۹۵٪")
         tr = sc.trial_in_80.dropna() if "trial_in_80" in sc else []
         if len(tr) >= TWO_MIN_SCORECARD_MIN:
             line += f" (روش آزمایشی: {fa(tr.astype(bool).mean() * 100)}٪ داخل ۸۰٪)"
-        L += ["", line + "."]
+        L.append(line + ".")
     else:
-        L += ["", f"📋 کارنامه روی {MARKET['name']}: هنوز {fa(len(sc))} پیش‌بینی سنجیده شده؛ "
-                  f"از {fa(TWO_MIN_SCORECARD_MIN)} به بعد درصد درستی این‌جا می‌آید."]
+        L.append(f"• 📋 کارنامه روی {MARKET['name']}: هنوز {fa(len(sc))} پیش‌بینی سنجیده شده؛ "
+                 f"از {fa(TWO_MIN_SCORECARD_MIN)} به بعد درصد درستی این‌جا می‌آید.")
 
     if ai:
         L += two_min_ai(price, (lo80, hi80), (lo95, hi95), row, "\n".join(L), sc)
