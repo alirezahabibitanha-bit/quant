@@ -850,6 +850,57 @@ def two_min_quantiles(scores):
     return [float(np.quantile(absz, p)) for p in TWO_MIN_LEVELS], absz, source
 
 
+TRADE_AMOUNTS = (100, 200, 300)   # اندازه معامله نمونه در «پیش‌بینی ۲ دقیقه» (دلار)
+
+
+def trade_targets(book, amounts=TRADE_AMOUNTS, profit=1.0):
+    """اگر الان با هر مبلغ معامله باز شود، قیمت بستن باید به کجا برسد که با کارمزد و فاصله خرید و فروش صفر نشود.
+    خرید: باز با ask، بستن با bid آینده. فروش (شرط روی پایین آمدن): باز با bid، بستن با ask آینده.
+    کارمزد FEE هر طرف درصدی از ارزش معامله است (مثل کمیسیون متاتریدر)."""
+    ask, bid = book["ask"], book["bid"]
+    rows = []
+    for a in amounts:
+        oz = a / ask
+        rows.append({"amount": a,
+                     "cost": a - oz * bid * (1 - FEE) + a * FEE,       # اگر همین الان باز و بسته شود
+                     "buy_even": ask * (1 + FEE) / (1 - FEE),
+                     "buy_profit": ask * (1 + FEE + profit / a) / (1 - FEE),
+                     "sell_even": bid * (1 - FEE) / (1 + FEE),
+                     "sell_profit": bid * (1 - FEE - profit / a) / (1 + FEE)})
+    return rows
+
+
+def trade_target_lines(book, price=None, sigma=0.0, absz=None):
+    """بخش «بخرید روی… بفروشید روی…» پیام ۲ دقیقه با ۱۰۰/۲۰۰/۳۰۰ دلار؛ فقط بازارهای دلاری (متاتریدر و جهانی).
+    شانس رسیدن به هر عدد تا ۲ دقیقه بعد از همان خطاهای واقعی گذشته (absz) حساب می‌شود که بازه ۲ دقیقه از آن ساخته شده."""
+    if not book or MARKET["unit"] != "دلار":
+        return []
+    fp = lambda x: fa(x, MARKET["digits"])
+    price = (book["bid"] + book["ask"]) / 2 if price is None else price
+
+    def chance(target):
+        if absz is None or sigma <= 0:
+            return ""
+        c = float(np.mean(absz > abs(np.log(target / price)) / sigma)) / 2
+        return " — شانس تا ۲ دقیقه: " + ("تقریباً صفر" if c < 0.001 else f"{fa(c * 100, 1)}٪")
+
+    rows = trade_targets(book)
+    fee = "صفر" if FEE == 0 else f"{fa(FEE * 100, 3)}٪"
+    L = ["", f"🎯 اگر الان معامله باز کنید (کارمزد هر طرف {fee}؛ مبلغ = کل ارزش معامله، بدون اهرم):",
+         "📈 اگر فکر می‌کنید بالا می‌رود:",
+         f"• الان بخرید روی {fp(book['ask'])}",
+         f"• بفروشید روی {fp(rows[0]['buy_even'])} ← فقط بی‌ضرر (هر مبلغی){chance(rows[0]['buy_even'])}"]
+    L += [f"• با {fa(r['amount'])} دلار، برای ۱ دلار سود بفروشید روی {fp(r['buy_profit'])}{chance(r['buy_profit'])}"
+          for r in rows]
+    L += ["📉 اگر فکر می‌کنید پایین می‌آید:",
+          f"• الان بفروشید روی {fp(book['bid'])}",
+          f"• دوباره بخرید (ببندید) روی {fp(rows[0]['sell_even'])} ← فقط بی‌ضرر{chance(rows[0]['sell_even'])}"]
+    L += [f"• با {fa(r['amount'])} دلار، برای ۱ دلار سود ببندید روی {fp(r['sell_profit'])}{chance(r['sell_profit'])}"
+          for r in rows]
+    L.append("یادتان باشد: جهت ۲ دقیقه را هیچ روشی بهتر از شیر یا خط نگفته؛ این عددها فقط می‌گویند کجا سود شروع می‌شود.")
+    return L
+
+
 def two_min_text(bars, book=None, now=None, ai=False):
     """پیام «پیش‌بینی ۲ دقیقه». book = {'bid','ask'} از fetch_book یا None. now فقط برای آزمایش.
     ai=True: نظر هوش مصنوعی هم گرفته، بازه «با اثر اخبار» ساخته، و در کارنامه زنده سنجیده می‌شود."""
@@ -893,6 +944,7 @@ def two_min_text(bars, book=None, now=None, ai=False):
                          "(کارمزد + فاصله خرید و فروش).",
                      f"شانس این‌قدر بالا رفتن در ۲ دقیقه: {chance_fa}."]
     L += cost_line
+    L += trade_target_lines(book, price, sigma, absz)
 
     last = signals(bars).iloc[-1]
     votes = {m: int(v) for m, v in last.items()}
