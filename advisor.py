@@ -850,6 +850,43 @@ def two_min_quantiles(scores):
     return [float(np.quantile(absz, p)) for p in TWO_MIN_LEVELS], absz, source
 
 
+TRADE_AMOUNTS = (100, 200, 300)   # اندازه معامله نمونه در «پیش‌بینی ۲ دقیقه» (دلار)
+
+
+def trade_targets(book, amounts=TRADE_AMOUNTS, profit=1.0):
+    """اگر الان با هر مبلغ معامله باز شود، قیمت بستن باید به کجا برسد که با کارمزد و فاصله خرید و فروش صفر نشود.
+    خرید: باز با ask، بستن با bid آینده. فروش (شرط روی پایین آمدن): باز با bid، بستن با ask آینده.
+    کارمزد FEE هر طرف درصدی از ارزش معامله است (مثل کمیسیون متاتریدر)."""
+    ask, bid = book["ask"], book["bid"]
+    rows = []
+    for a in amounts:
+        oz = a / ask
+        rows.append({"amount": a,
+                     "cost": a - oz * bid * (1 - FEE) + a * FEE,       # اگر همین الان باز و بسته شود
+                     "buy_even": ask * (1 + FEE) / (1 - FEE),
+                     "buy_profit": ask * (1 + FEE + profit / a) / (1 - FEE),
+                     "sell_even": bid * (1 - FEE) / (1 + FEE),
+                     "sell_profit": bid * (1 - FEE - profit / a) / (1 + FEE)})
+    return rows
+
+
+def trade_target_lines(book):
+    """بخش «با ۱۰۰/۲۰۰/۳۰۰ دلار» پیام ۲ دقیقه؛ فقط بازارهای دلاری (متاتریدر و جهانی)."""
+    if not book or MARKET["unit"] != "دلار":
+        return []
+    fp = lambda x: fa(x, MARKET["digits"])
+    rows = trade_targets(book)
+    fee = "صفر" if FEE == 0 else f"{fa(FEE * 100, 3)}٪"
+    L = ["", f"🎯 اگر الان معامله باز کنید (کارمزد هر طرف {fee} + فاصله خرید و فروش):",
+         f"• خرید (اگر فکر می‌کنید بالا می‌رود): قیمت فروش باید حداقل به {fp(rows[0]['buy_even'])} برسد تا صفر شوید.",
+         f"• فروش (اگر فکر می‌کنید پایین می‌آید): قیمت خرید باید حداکثر به {fp(rows[0]['sell_even'])} برسد تا صفر شوید.",
+         "این عدد صفر شدن برای هر مبلغی یکی است؛ ولی برای ۱ دلار سود:"]
+    for r in rows:
+        L.append(f"• با {fa(r['amount'])} دلار: خرید ← {fp(r['buy_profit'])}، فروش ← {fp(r['sell_profit'])} "
+                 f"(هزینه کل حدود {fa(r['cost'], 2)} دلار)")
+    return L
+
+
 def two_min_text(bars, book=None, now=None, ai=False):
     """پیام «پیش‌بینی ۲ دقیقه». book = {'bid','ask'} از fetch_book یا None. now فقط برای آزمایش.
     ai=True: نظر هوش مصنوعی هم گرفته، بازه «با اثر اخبار» ساخته، و در کارنامه زنده سنجیده می‌شود."""
@@ -893,6 +930,7 @@ def two_min_text(bars, book=None, now=None, ai=False):
                          "(کارمزد + فاصله خرید و فروش).",
                      f"شانس این‌قدر بالا رفتن در ۲ دقیقه: {chance_fa}."]
     L += cost_line
+    L += trade_target_lines(book)
 
     last = signals(bars).iloc[-1]
     votes = {m: int(v) for m, v in last.items()}
