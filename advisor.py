@@ -870,20 +870,34 @@ def trade_targets(book, amounts=TRADE_AMOUNTS, profit=1.0):
     return rows
 
 
-def trade_target_lines(book):
-    """بخش «با ۱۰۰/۲۰۰/۳۰۰ دلار» پیام ۲ دقیقه؛ فقط بازارهای دلاری (متاتریدر و جهانی)."""
+def trade_target_lines(book, price=None, sigma=0.0, absz=None):
+    """بخش «بخرید روی… بفروشید روی…» پیام ۲ دقیقه با ۱۰۰/۲۰۰/۳۰۰ دلار؛ فقط بازارهای دلاری (متاتریدر و جهانی).
+    شانس رسیدن به هر عدد تا ۲ دقیقه بعد از همان خطاهای واقعی گذشته (absz) حساب می‌شود که بازه ۲ دقیقه از آن ساخته شده."""
     if not book or MARKET["unit"] != "دلار":
         return []
     fp = lambda x: fa(x, MARKET["digits"])
+    price = (book["bid"] + book["ask"]) / 2 if price is None else price
+
+    def chance(target):
+        if absz is None or sigma <= 0:
+            return ""
+        c = float(np.mean(absz > abs(np.log(target / price)) / sigma)) / 2
+        return " — شانس تا ۲ دقیقه: " + ("تقریباً صفر" if c < 0.001 else f"{fa(c * 100, 1)}٪")
+
     rows = trade_targets(book)
     fee = "صفر" if FEE == 0 else f"{fa(FEE * 100, 3)}٪"
-    L = ["", f"🎯 اگر الان معامله باز کنید (کارمزد هر طرف {fee} + فاصله خرید و فروش):",
-         f"• خرید (اگر فکر می‌کنید بالا می‌رود): قیمت فروش باید حداقل به {fp(rows[0]['buy_even'])} برسد تا صفر شوید.",
-         f"• فروش (اگر فکر می‌کنید پایین می‌آید): قیمت خرید باید حداکثر به {fp(rows[0]['sell_even'])} برسد تا صفر شوید.",
-         "این عدد صفر شدن برای هر مبلغی یکی است؛ ولی برای ۱ دلار سود:"]
-    for r in rows:
-        L.append(f"• با {fa(r['amount'])} دلار: خرید ← {fp(r['buy_profit'])}، فروش ← {fp(r['sell_profit'])} "
-                 f"(هزینه کل حدود {fa(r['cost'], 2)} دلار)")
+    L = ["", f"🎯 اگر الان معامله باز کنید (کارمزد هر طرف {fee}؛ مبلغ = کل ارزش معامله، بدون اهرم):",
+         "📈 اگر فکر می‌کنید بالا می‌رود:",
+         f"• الان بخرید روی {fp(book['ask'])}",
+         f"• بفروشید روی {fp(rows[0]['buy_even'])} ← فقط بی‌ضرر (هر مبلغی){chance(rows[0]['buy_even'])}"]
+    L += [f"• با {fa(r['amount'])} دلار، برای ۱ دلار سود بفروشید روی {fp(r['buy_profit'])}{chance(r['buy_profit'])}"
+          for r in rows]
+    L += ["📉 اگر فکر می‌کنید پایین می‌آید:",
+          f"• الان بفروشید روی {fp(book['bid'])}",
+          f"• دوباره بخرید (ببندید) روی {fp(rows[0]['sell_even'])} ← فقط بی‌ضرر{chance(rows[0]['sell_even'])}"]
+    L += [f"• با {fa(r['amount'])} دلار، برای ۱ دلار سود ببندید روی {fp(r['sell_profit'])}{chance(r['sell_profit'])}"
+          for r in rows]
+    L.append("یادتان باشد: جهت ۲ دقیقه را هیچ روشی بهتر از شیر یا خط نگفته؛ این عددها فقط می‌گویند کجا سود شروع می‌شود.")
     return L
 
 
@@ -930,7 +944,7 @@ def two_min_text(bars, book=None, now=None, ai=False):
                          "(کارمزد + فاصله خرید و فروش).",
                      f"شانس این‌قدر بالا رفتن در ۲ دقیقه: {chance_fa}."]
     L += cost_line
-    L += trade_target_lines(book)
+    L += trade_target_lines(book, price, sigma, absz)
 
     last = signals(bars).iloc[-1]
     votes = {m: int(v) for m, v in last.items()}
