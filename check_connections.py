@@ -153,7 +153,8 @@ def check_mt():
                                             f"clock difference {skew / 60:+.0f} min")
     except (Exception, SystemExit) as e:
         n = len(pd.read_csv(mt_bridge.BARS_PATH)) if os.path.exists(mt_bridge.BARS_PATH) else 0
-        show("MT minutes", False, f"{e} ({n} one-minute bars stored in 3 days, clock difference {skew / 60:+.0f} min)")
+        hint = " - price unchanged, market probably closed" if skew < -1800 else ""
+        show("MT minutes", False, f"{e} ({n} one-minute bars stored in 3 days, clock difference {skew / 60:+.0f} min{hint})")
     return ok
 
 

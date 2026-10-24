@@ -72,7 +72,9 @@
     می‌فرستد؛ رمز ~/.mt_bridge_secret. ذخیره: mt_tick.json، mt_bars.csv (UTC)، mt_daily.csv. دکمه «📈 قیمت متاتریدر».
     متاتریدر با Wine زیر کاربر trader؛ نصب اول با Remote Desktop (xrdp، فقط از تونل SSH، درگاه محلی 33389) و
     germany/mt5_install.sh؛ بعد mt5.service با xvfb بدون صفحه. روی سرور واقعی (185.204.169.110) نصب MT5 کار کرد با: Wine 10.0 ثابت (apt-mark hold؛ 10.3+ خطای
-    «A debugger has been found» می‌دهد) و xorgxrdp صریح (بدونش Remote Desktop صفحه آبی). Remote Desktop از Port forward
+    «A debugger has been found» می‌دهد) و xorgxrdp صریح. **حالا Wine 11.0 قفل‌شده (۲ آبان ۱۴۰۵):** متاتریدر build 6274
+    (LiveUpdate ۳۰ مهر) روی 10.0 باز می‌شد ولی گیر می‌کرد (بدون دفترچه، بدون قیمت)؛ روی 11.0 همان پوشه ~/.mt5 بعد از
+    «wineboot -u» کار کرد. setup.sh هم 11.0 نصب می‌کند (بدونش Remote Desktop صفحه آبی). Remote Desktop از Port forward
     خود VS Code (3389) با رزولوشن کوچک (کادر ورود در صفحه بزرگ دیده نمی‌شد).
     **کار می‌کند (۱۴ مهر ۱۴۰۵):** ربات تلگرام @yajavadalbot با «--telegram --metatrader»، حساب دمو MetaQuotes-Demo،
     PriceBridge روی XAUUSD (متاتریدر خودش کامپایل کرد)، mt5.service فعال، ۸۴۸ روز داده روزانه. جیمینای کلید ندارد (عمداً).
